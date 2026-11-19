@@ -2,26 +2,8 @@ import {createServer} from 'node:http'
 import {Readable} from 'node:stream'
 import {resolve,extname,sep} from 'node:path'
 import {readFile} from 'node:fs/promises'
-import {getDocument} from 'pdfjs-dist/legacy/build/pdf.mjs'
-import {createCanvas} from '@napi-rs/canvas'
-import {createWorker} from 'tesseract.js'
 import {service} from './service.js'
-import {readPages} from './pages.js'
-
-async function read(data){
-  let worker
-  try{
-    const pdf=getDocument({data,isEvalSupported:false,maxImageSize:16000000,standardFontDataUrl:resolve('dist/client/pdf-fonts')+'/'})
-    return await readPages(pdf,async page=>{
-      worker??=await createWorker('eng',1,{langPath:resolve('dist/client/ocr'),cacheMethod:'none'})
-      const base=page.getViewport({scale:1})
-      const viewport=page.getViewport({scale:Math.min(3,2400/Math.max(base.width,base.height))})
-      const canvas=createCanvas(Math.ceil(viewport.width),Math.ceil(viewport.height))
-      await page.render({canvas,canvasContext:canvas.getContext('2d'),viewport}).promise
-      return (await worker.recognize(canvas.toBuffer('image/png'))).data.text
-    })
-  }finally{await worker?.terminate()}
-}
+import {read} from './read-local.js'
 const port=Number(process.env.PORT||8031)
 const origin='http://127.0.0.1:'+port
 const root=resolve('dist/client')

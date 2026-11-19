@@ -34,3 +34,30 @@ Use the streamable HTTP URL http://127.0.0.1:8031/mcp with a local MCP client. T
 The extractor recognizes explicit financial metrics and receipt summary lines, including growth narratives that report both a percentage and an ending amount. Multi-column rows without reliable period attribution require manual review. Use Search for arbitrary fields or select an area on the original. An empty unit or period means the extractor could not establish it. A $ symbol stays ambiguous unless the document supplies a currency code. English OCR accuracy depends on image quality. The extractor uses rules and local OCR. Connecting an AI client is optional.
 
 The original Python service is available separately via `uvicorn folio.api:app` for existing /api/extract integrations.
+
+## Desktop installation and agent skills
+
+The Windows x64 installer in `output/installers` installs Folio for the current user, creates Start menu and desktop shortcuts, and offers to add the `folio-review` skill to detected Codex, Claude Code, Gemini CLI and Cursor profiles. Run setup again after adding another agent. The Windows application opens the local workbench in the default browser. Installed agents can extract and OCR PDFs directly using the included CLI even when the browser is closed. Uninstall from Windows Installed apps. Modified agent skill files are preserved.
+
+For Linux x64 with glibc, extract the Linux archive and run `Folio/install-linux.sh`. Open Folio Review in the application menu, or use the executable at `~/.local/share/folio-review/folio`. Remove the installation using its `uninstall.sh`. Start a new agent session to refresh the skill list.
+
+### Rebuild distribution packages on Linux x64
+
+Run `npm ci && npm run build`. The staging script copies the pinned frontend and runtime dependencies into a new directory. Supply Node 24, its matching license, and the native Windows canvas package matching the installed canvas version.
+
+```sh
+mkdir -p output/installers output/desktop-build
+cd output/desktop-build
+npm pack node-win-x64@24.18.0 @napi-rs/canvas-win32-x64-msvc@1.1.1
+cd ../..
+python3 desktop/stage.py windows output/desktop-build/windows \
+  --node output/desktop-build/node-win-x64-24.18.0.tgz \
+  --canvas output/desktop-build/napi-rs-canvas-win32-x64-msvc-1.1.1.tgz \
+  --node-license /path/to/node-24.18.0/LICENSE
+makensis -DPAYLOAD="$PWD/output/desktop-build/windows" -DVERSION=1.0.0 \
+  -DOUTFILE="$PWD/output/installers/Folio-Review-1.0.0-x64-Setup.exe" desktop/installer.nsi
+python3 desktop/stage.py linux output/desktop-build/Folio/app \
+  --node /path/to/node-24.18.0/bin/node --node-license /path/to/node-24.18.0/LICENSE
+cp desktop/*linux.sh output/desktop-build/Folio/
+tar czf output/installers/Folio-Review-1.0.0-linux-x64.tar.gz -C output/desktop-build Folio
+```
