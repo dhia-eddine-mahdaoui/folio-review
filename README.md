@@ -1,17 +1,36 @@
-# Folio financial workpapers
+# Folio
 
-Import a PDF or a batch of PDFs into a private document library, search their text, highlight source lines or draw a rectangle on the original page, and save figures with a period, unit, evidence and reviewer note. Each PDF has a register. Excel exports include reviewed figures and a second sheet with extracted numerical source rows. CSV exports contain the reviewed register.
+Folio turns financial report highlights and receipt totals into a review queue. Each finding carries its source page and text. Select a finding to inspect the original, correct its fields, and save it to the register. Receipt checks compare a single subtotal plus recognized tax and tip against the total. Workbooks separate reviewed figures from proposed findings. CSV exports only reviewed figures.
 
-## Run
+## Run locally
 
-Use Node 22.13 or later. Run `npm ci && npm run build`, then `python3 -m http.server 8000 --bind 127.0.0.1 --directory dist` and open http://localhost:8000. Deploy the contents of dist to an HTTPS static host for browser use. Set access controls on the host for a private deployment.
+Use Node 24 LTS. From this directory run:
 
-## Data and operating boundaries
+```sh
+npm ci
+npm run build
+npm start
+```
 
-The browser parses PDFs locally with PDF.js and stores originals, the extracted text index and reviewed figures in IndexedDB. Identical files reopen the existing register. Saving a figure updates the register transactionally. Documents can be removed individually. Data belongs to this browser profile and origin. Clearing site storage deletes the library. Retain original PDFs and export workbooks for records.
+Open http://127.0.0.1:8031. The local server binds to loopback. The private Sites deployment uses the same frontend and extraction rules. The browser library stores original PDFs, indexes and reviews in IndexedDB on the current device. Export a .folio backup per document for portability. Previously imported PDFs open directly in the revised review queue.
 
-Text extraction groups positioned PDF text into visual lines. Source rows and numbers in an Excel export are unreviewed reading-order candidates. The reviewer selects the period, metric and unit, and verifies the value against the visible original. Image-only pages support manual region capture and transcription. Imports support unencrypted PDFs up to 50 MB and 1,000 pages. The private hosted release is a single-device workbench. Shared editing, centralized backups and automatic OCR are outside this deployment.
+## REST
 
-The Python service in folio/ retains the earlier narrowly scoped structured extraction API for existing integrations. The library and general-purpose workbook workflow run in the browser. Synthetic fixtures under tests/ are used only by regression tests.
+POST binary PDF data to /api/v2/analyze. The local service runs bundled English OCR on pages with fewer than 24 extracted characters. The hosted REST endpoint reads the PDF text layer and returns sparse pages in needs_ocr. The browser performs English OCR locally on sparse pages and can run OCR on any selected page, including pages in previously imported files. A page OCR retry replaces that page’s search index. Saved citations retain their original text.
 
-**Backup** downloads a portable .folio archive containing the original PDF and the reviewed register. Import it on another device to restore the document. Restoring into an existing register merges figures by identifier and retains the more recently saved version.
+```sh
+curl --fail-with-body -H 'Content-Type: application/pdf' \
+  --data-binary @report.pdf http://127.0.0.1:8031/api/v2/analyze
+```
+
+Alternatively POST JSON with a pages array of strings. Separate visual rows with newlines and preserve page order. The response includes findings, source quotes, page numbers, proposed units and periods, receipt_check and needs_ocr. Inputs are limited to 8 MiB, 150 pages and 1.5 million extracted characters for automation requests. Browser imports support 50 MB and 1,000 pages. Inputs sent to REST or MCP are processed per request. Neither endpoint reads the browser’s private library.
+
+## MCP
+
+Use the streamable HTTP URL http://127.0.0.1:8031/mcp with a local MCP client. The private hosted Site exposes the same route with Sites authentication. The tools are analyze_pdf (pdf_base64, up to 6 MiB before encoding, with additional JSON overhead counted toward the request limit) and analyze_text (pages). Both return structured results as JSON text. GET /api/v2 describes the wire format.
+
+## Extraction and review
+
+The extractor recognizes explicit financial metrics and receipt summary lines, including growth narratives that report both a percentage and an ending amount. Multi-column rows without reliable period attribution require manual review. Use Search for arbitrary fields or select an area on the original. An empty unit or period means the extractor could not establish it. A $ symbol stays ambiguous unless the document supplies a currency code. English OCR accuracy depends on image quality. The extractor uses rules and local OCR. Connecting an AI client is optional.
+
+The original Python service is available separately via `uvicorn folio.api:app` for existing /api/extract integrations.

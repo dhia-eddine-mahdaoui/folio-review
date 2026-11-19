@@ -1,4 +1,5 @@
 import {strToU8,zipSync} from 'fflate'
+import {findings} from './findings'
 import type {RecordFile} from './register'
 
 const main='http://schemas.openxmlformats.org/spreadsheetml/2006/main'
@@ -27,18 +28,18 @@ function sheet(rows:(string|number)[][],widths:number[]){
 export function writeWorkbook(doc:RecordFile){
   const figures:(string|number)[][]=[['Metric','Value','Unit','Period','Source PDF','Page','Evidence','Reviewer note','Reviewed UTC']]
   for(const f of doc.figures)figures.push([f.label,f.amount.replace(/[^0-9]/g,'').length<=15?Number(f.amount):f.amount,f.unit,f.period,doc.name,f.source.page,f.source.text,f.note,f.saved])
-  const evidence:(string|number)[][]=[['Page','Source text','Numbers in reading order']]
-  for(const l of doc.lines){
-    const tokens=l.text.match(/\(\d[\d,]*(?:\.\d+)?\)|-?\d[\d,]*(?:\.\d+)?/g)
-    if(tokens)evidence.push([l.page,l.text,...tokens.slice(0,16382)])
+  const evidence:(string|number)[][]=[['Metric','Extracted value','Unit','Period','Page','Evidence','Status']]
+  for(const f of findings(doc.lines)){
+    const reviewed=doc.figures.some(r=>r.source.page===f.source.page&&r.source.text===f.source.text)
+    evidence.push([f.label,f.amount,f.unit,f.period,f.source.page,f.source.text,reviewed?'Reviewed':'Needs review'])
   }
   const parts:Record<string,string>={
     '[Content_Types].xml':'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'+[1,2].map(i=>'<Override PartName="/xl/worksheets/sheet'+i+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('')+'</Types>',
     '_rels/.rels':'<Relationships xmlns="'+packageRel+'"><Relationship Id="rId1" Type="'+rel+'/officeDocument" Target="xl/workbook.xml"/></Relationships>',
-    'xl/workbook.xml':'<workbook xmlns="'+main+'" xmlns:r="'+rel+'"><sheets><sheet name="Reviewed figures" sheetId="1" r:id="rId1"/><sheet name="Extracted source rows" sheetId="2" r:id="rId2"/></sheets></workbook>',
+    'xl/workbook.xml':'<workbook xmlns="'+main+'" xmlns:r="'+rel+'"><sheets><sheet name="Reviewed figures" sheetId="1" r:id="rId1"/><sheet name="Document findings" sheetId="2" r:id="rId2"/></sheets></workbook>',
     'xl/_rels/workbook.xml.rels':'<Relationships xmlns="'+packageRel+'">'+[1,2].map(i=>'<Relationship Id="rId'+i+'" Type="'+rel+'/worksheet" Target="worksheets/sheet'+i+'.xml"/>').join('')+'</Relationships>',
     'xl/worksheets/sheet1.xml':sheet(figures,[32,18,18,20,40,10,90,45,26]),
-    'xl/worksheets/sheet2.xml':sheet(evidence,[10,100,24])
+    'xl/worksheets/sheet2.xml':sheet(evidence,[30,18,18,16,10,100,18])
   }
   const bytes=zipSync(Object.fromEntries(Object.entries(parts).map(([name,value])=>[name,strToU8(value)])))
   const url=URL.createObjectURL(new Blob([new Uint8Array(bytes)],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}))

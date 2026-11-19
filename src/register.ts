@@ -1,7 +1,7 @@
 import {getDocument, Util} from 'pdfjs-dist'
 export type Line = {page:number; text:string; box:[number,number,number,number]}
 export type Figure = {id:string; label:string; amount:string; unit:string; period:string; note:string; source:Line; saved:string}
-export type RecordFile = {id:string; name:string; pages:number; added:string; file:File; lines:Line[]; figures:Figure[]}
+export type RecordFile = {id:string; name:string; pages:number; added:string; file:File; lines:Line[]; figures:Figure[]; ocrPages?:number[]}
 type Header = Pick<RecordFile,'id'|'name'|'pages'|'added'> & {count:number}
 let connection:Promise<IDBDatabase>
 function database(){
@@ -51,6 +51,8 @@ export async function indexPdf(file:File,onProgress:(message:string)=>void):Prom
   const existing=await get(id)
   if(existing)return existing
   const task=getDocument({data:bytes,standardFontDataUrl:'/pdf-fonts/'})
+  let worker:Awaited<ReturnType<typeof import("./ocr").startOCR>>|undefined
+  const ocrPages:number[]=[]
   try{
     const doc=await task.promise
     if(doc.numPages>1000)throw Error('The document exceeds the 1,000-page indexing limit.')
@@ -67,6 +69,13 @@ export async function indexPdf(file:File,onProgress:(message:string)=>void):Prom
         const items=rows.get(key)??[]
         items.push({left:rect[0],text:item.str.trim(),rect}); rows.set(key,items)
       }
+      if(rows.size<3){
+        onProgress('Reading scan '+pageNumber+' of '+doc.numPages)
+        const {startOCR,recognizePage}=await import('./ocr')
+        worker??=await startOCR()
+        const scanned=await recognizePage(page,worker)
+        if(scanned.length){lines.push(...scanned);ocrPages.push(pageNumber);page.cleanup();continue}
+      }
       for(const [,items] of [...rows].sort(([a],[b])=>a-b)){
         items.sort((a,b)=>a.left-b.left)
         const box:[number,number,number,number]=[1,1,0,0]
@@ -78,9 +87,9 @@ export async function indexPdf(file:File,onProgress:(message:string)=>void):Prom
       }
       page.cleanup()
     }
-    const record={id,file,name:file.name,pages:doc.numPages,added:new Date().toISOString(),lines,figures:[]}
+    const record={id,file,name:file.name,pages:doc.numPages,added:new Date().toISOString(),lines,ocrPages,figures:[]}
     return (await change(id,old=>old??record))!
-  }finally{await task.destroy()}
+  }finally{try{await worker?.terminate()}finally{await task.destroy()}}
 }
 export function download(record:RecordFile){
   const rows=[['Metric','Value','Unit','Period','Document','Page','Evidence','Notes','Reviewed UTC']]
@@ -92,4 +101,21 @@ export function download(record:RecordFile){
   const url=URL.createObjectURL(new Blob(['\uFEFF',csv],{type:'text/csv;charset=utf-8'}))
   const a=document.createElement('a');a.href=url;a.download=record.name.replace(/\.pdf$/i,'')+'-register.csv';a.click()
   setTimeout(()=>URL.revokeObjectURL(url),1000)
+}
+
+export async function scanPage(record:RecordFile,pageNumber:number){
+  const {startOCR,recognizePage}=await import('./ocr')
+  const task=getDocument({data:await record.file.arrayBuffer(),standardFontDataUrl:'/pdf-fonts/'})
+  try{
+    const pdf=await task.promise
+    const worker=await startOCR()
+    try{
+      const scanned=await recognizePage(await pdf.getPage(pageNumber),worker)
+      if(!scanned.length)throw Error('No readable text found on this page.')
+      return (await change(record.id,prior=>{
+        if(!prior)throw Error()
+        return {...prior,lines:[...prior.lines.filter(l=>l.page!==pageNumber),...scanned].sort((a,b)=>a.page-b.page),ocrPages:[...new Set([...(prior.ocrPages??[]),pageNumber])]}
+      }))!
+    }finally{await worker.terminate()}
+  }finally{await task.destroy()}
 }

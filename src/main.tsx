@@ -1,11 +1,12 @@
 import {useEffect,useRef,useState} from 'react'
 import {createRoot} from 'react-dom/client'
-import {Archive,FileText,FolderOpen,Upload,Search,Trash2,LockKeyhole,Files,ChevronRight} from 'lucide-react'
+import {Layers3,FileText,FolderOpen,Upload,Search,Trash2,LockKeyhole,Files,ChevronRight} from 'lucide-react'
 import {Reader} from './Reader'
 import {list,get,change,indexPdf,type RecordFile} from './register'
 import {readDraft,writeDraft} from './draft'
 import './style.css'
 import './library.css'
+import './workspace.css'
 
 function App(){
   const [items,setItems]=useState<Awaited<ReturnType<typeof list>>>([]),[active,open]=useState<RecordFile>(),[filter,search]=useState('')
@@ -45,15 +46,15 @@ function App(){
     if(!confirm('Delete '+name+' and its saved figures from this browser?'))return
     try{const old=await readDraft();if(old&&old.file.name===name)await writeDraft();await change(id,()=>undefined);await refresh()}catch{fail('Could not delete this document.')}
   }
-  return <div className="app"><header className="mast"><div className="word"><Archive/>Folio</div><span>Financial workpapers</span><small><LockKeyhole size={14}/>Private workspace</small></header>
+  return <div className="app"><header className="mast"><div className="word"><Layers3/>Folio</div><span>Document operations</span><small><LockKeyhole size={14}/>Private workspace</small></header>
   {error&&<div role="alert" className="alert">{error}<button onClick={()=>fail('')}>Dismiss</button></div>}
   {message&&<div role="status" className="working">{message}</div>}
   {active?<Reader key={active.id} initial={active} back={()=>{open(undefined);void refresh().catch(()=>fail('Library refresh failed.'))}}/>:
-  <div className="shell"><nav className="rail"><span>WORKSPACE</span><strong><FolderOpen/>Document library</strong><div className="storage"><LockKeyhole/><b>Device storage</b><small>PDFs and reviewed figures are saved in this browser.</small></div></nav>
-  <main className="library"><div className="library-head"><div><span className="kicker">WORKPAPERS</span><h1>Document library</h1></div><button className="solid" disabled={!!message} onClick={()=>picker.current?.click()}><Upload/>Import PDFs</button></div>
+  <div className="shell"><nav className="rail"><span>WORKSPACE</span><strong><FolderOpen/>Document library</strong><a className="api-link" href="/api/v2">API reference</a><div className="storage"><LockKeyhole/><b>Device storage</b><small>PDFs and reviewed figures are saved in this browser.</small></div></nav>
+  <main className="library"><div className="library-head"><div><h1>Document library</h1></div><button className="solid" disabled={!!message} onClick={()=>picker.current?.click()}><Upload/>Import PDFs</button></div>
   <input ref={picker} type="file" hidden multiple accept=".pdf,.folio,application/pdf" aria-label="Choose PDF files" onChange={e=>{void ingest(Array.from(e.target.files??[]));e.target.value=''}}/>
   <section className={'drop '+(drag?'drag':'')} onDragOver={e=>{e.preventDefault();dragging(true)}} onDragLeave={()=>dragging(false)} onDrop={e=>{e.preventDefault();dragging(false);void ingest(Array.from(e.dataTransfer.files))}}>
-    <div className="sheets" aria-hidden="true"><i/><i/><i><FileText/></i></div><div><h2>Import financial documents</h2><p>Drop annual reports, statements or diligence PDFs here.</p><small>PDFs up to 50 MB · Import a .folio workpaper to restore reviewed figures</small></div></section>
+    <div className="intake-icon"><Upload/></div><div><h2>Add documents for review</h2><p>Drop reports, statements or scanned receipt PDFs here.</p><small>PDFs up to 50 MB · Import a .folio workpaper to restore reviewed figures</small></div></section>
   <div className="sectionbar"><h2>Documents <sup>{items.length}</sup></h2><label className="search"><Search/><input aria-label="Filter documents" placeholder="Find a document" value={filter} onChange={e=>search(e.target.value)}/></label></div>
   <div className="filetable"><div className="headrow"><span>Document name</span><span>Pages</span><span>Figures</span><span/></div>
   {items.filter(i=>i.name.toLowerCase().includes(filter.toLowerCase())).map(i=><div className="filerow" key={i.id}><button onClick={async()=>{try{const d=await get(i.id);if(!d)throw Error();open(d)}catch{fail('Document unavailable. Refresh the library.')}}}><FileText/>{i.name}<ChevronRight/></button><span>{i.pages}</span><span>{i.count}</span><button aria-label={'Delete '+i.name} onClick={()=>void remove(i.id,i.name)}><Trash2/></button></div>)}

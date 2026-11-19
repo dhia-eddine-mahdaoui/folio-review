@@ -69,6 +69,14 @@ export function Document({ url, filename, page, pages, onPage, source, onRegion 
     }).catch(() => { if (active) setError('Unable to render this page.') })
     return () => { active = false; task?.cancel() }
   }, [document, page, width, zoom])
+  const evidenceMark=useRef<HTMLDivElement>(null)
+  useEffect(()=>{
+    const mark=evidenceMark.current
+    const scroller=holder.current?.parentElement
+    if(!mark||!scroller||!rendered||!source||source.page!==rendered.page||source.box[2]<=0)return
+    const offset=mark.getBoundingClientRect().top-scroller.getBoundingClientRect().top
+    if(offset<0||offset>scroller.clientHeight*.8)scroller.scrollTop+=offset-scroller.clientHeight*.4
+  },[rendered,source?.page,source?.box])
   const box = outline ?? (rendered?.document === document && rendered?.page === page && source?.page === page ? source.box : undefined)
   return <section className="document panel" aria-label="Source document">
     <div className="document-head">
@@ -98,7 +106,7 @@ export function Document({ url, filename, page, pages, onPage, source, onRegion 
           const selected=region(point(e));start.current=undefined;outlineBox(undefined)
           if(selected[2]-selected[0]>.005&&selected[3]-selected[1]>.005){mark(false);onRegion?.(selected)}
         }}/>}
-        {box && <div className="highlight" style={{ left: `${box[0] * 100}%`, top: `${box[1] * 100}%`, width: `${(box[2] - box[0]) * 100}%`, height: `${(box[3] - box[1]) * 100}%` }}/>}
+        {box && <div ref={evidenceMark} className="highlight" style={{ left: `${box[0] * 100}%`, top: `${box[1] * 100}%`, width: `${(box[2] - box[0]) * 100}%`, height: `${(box[3] - box[1]) * 100}%` }}/>}
       </div>
     </div></div>
     <div className="document-foot"><span className="key-swatch"/> {box ? 'Highlighted source evidence' : 'Navigate the PDF or select a source from the review'}</div>
