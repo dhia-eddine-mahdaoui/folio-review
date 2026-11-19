@@ -1,0 +1,107 @@
+{
+  "title": "Northfield Components",
+  "filename": "northfield-fy2025.pdf",
+  "pages": 400,
+  "metrics": [
+    {
+      "id": "revenue",
+      "name": "Revenue",
+      "unit": "GBP m",
+      "period": "FY2025",
+      "status": "ready",
+      "reason": "Reported evidence is available. Verify the figure before approving.",
+      "evidence": [
+        {
+          "page": 18,
+          "quote": "FY2025 reported Revenue: £128.4m",
+          "box": [
+            0.1037037037037037,
+            0.4690000057220459,
+            0.47792584454571757,
+            0.49481873512268065
+          ],
+          "value": "128.4",
+          "basis": "reported"
+        }
+      ]
+    },
+    {
+      "id": "ebitda",
+      "name": "Adjusted EBITDA",
+      "unit": "GBP m",
+      "period": "FY2025",
+      "status": "ready",
+      "reason": "Reported evidence is available. Verify the figure before approving.",
+      "evidence": [
+        {
+          "page": 42,
+          "quote": "FY2025 reported Adjusted EBITDA: £24.6m",
+          "box": [
+            0.1037037037037037,
+            0.4690000057220459,
+            0.5569036413122106,
+            0.49481873512268065
+          ],
+          "value": "24.6",
+          "basis": "reported"
+        },
+        {
+          "page": 42,
+          "quote": "FY2025 forecast Adjusted EBITDA: £26.1m",
+          "box": [
+            0.1037037037037037,
+            0.5112109184265137,
+            0.4965870044849537,
+            0.5348265647888184
+          ],
+          "value": "26.1",
+          "basis": "forecast"
+        }
+      ]
+    },
+    {
+      "id": "debt",
+      "name": "Net debt",
+      "unit": "GBP m",
+      "period": "FY2025",
+      "status": "conflict",
+      "reason": "Sources disagree for the same period. Check the reporting basis before approving.",
+      "evidence": [
+        {
+          "page": 67,
+          "quote": "FY2025 actual Net debt: £83.2m",
+          "box": [
+            0.1037037037037037,
+            0.4690000057220459,
+            0.43592585810908563,
+            0.49481873512268065
+          ],
+          "value": "83.2",
+          "basis": "actual"
+        },
+        {
+          "page": 284,
+          "quote": "FY2025 provisional Net debt: £88.2m",
+          "box": [
+            0.1037037037037037,
+            0.4690000057220459,
+            0.490259184660735,
+            0.49481873512268065
+          ],
+          "value": "88.2",
+          "basis": "provisional"
+        }
+      ]
+    },
+    {
+      "id": "cash",
+      "name": "Free cash flow",
+      "unit": "GBP m",
+      "period": "FY2025",
+      "status": "missing",
+      "reason": "No matching source was found for this period and unit.",
+      "evidence": []
+    }
+  ],
+  "text_pages": 400
+}
