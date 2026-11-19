@@ -67,7 +67,7 @@ export function Document({ url, filename, page, pages, onPage, source }: {
     <div className="document-tools">
       <div className="tool-group">
         <button className="icon-button" aria-label="Previous PDF page" onClick={() => onPage(page - 1)} disabled={page <= 1}><ChevronLeft size={16}/></button>
-        <span className="page-count"><strong>{page}</strong> / {pages}</span>
+        <form className="page-count" key={page} onSubmit={event => { event.preventDefault(); const input = event.currentTarget.elements.namedItem('page') as HTMLInputElement; onPage(Number(input.value)); input.blur() }}><input aria-label="Jump to PDF page" name="page" type="number" required min={1} max={pages} defaultValue={page}/> / {pages}</form>
         <button className="icon-button" aria-label="Next PDF page" onClick={() => onPage(page + 1)} disabled={page >= pages}><ChevronRight size={16}/></button>
       </div>
       <div className="tool-group">

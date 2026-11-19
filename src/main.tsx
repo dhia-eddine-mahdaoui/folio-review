@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ArrowDownToLine, BookOpen, Check, ChevronRight, CircleAlert, CircleCheck, ClipboardList, FileText, History, PanelTop, RotateCcw, UploadCloud, X } from 'lucide-react'
+import { ArrowDownToLine, BookOpen, Check, ChevronRight, CircleAlert, CircleCheck, ClipboardList, FileText, History, PanelTop, Layers3, ScanLine, Files, RotateCcw, UploadCloud, X } from 'lucide-react'
 import { Document } from './Document'
 import { exportReview, formatAmount, loadDecisions, samplePdf, saveDecisions, type Decision, type Decisions, type Evidence, type Metric, type Review } from './model'
+import { readDraft, writeDraft, type Draft } from './draft'
+import { importPdf } from './importPdf'
 import './style.css'
+import './workbench.css'
 
 const labels = { ready: 'To verify', conflict: 'Conflict', limited: 'Provisional', missing: 'Missing' }
 
@@ -23,12 +26,15 @@ function App() {
   const [problem, setProblem] = useState('')
   const [pdfUrl, setPdfUrl] = useState(samplePdf)
   const [local, setLocal] = useState(false)
+  const [mobilePane, setMobilePane] = useState<'review' | 'document'>('review')
+  const [reading, setReading] = useState('Reading document…')
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
   const [reopening, setReopening] = useState(false)
   const [exclusion, setExclusion] = useState(false)
   const auditDialog = useRef<HTMLDialogElement>(null)
   const uploadDialog = useRef<HTMLDialogElement>(null)
+  const draft = useRef<Draft | undefined>(undefined)
   const uploadedUrl = useRef<string | undefined>(undefined)
   const metric = review?.metrics.find(row => row.id === selected)
   const decision = metric && decisions[metric.id]
@@ -53,6 +59,8 @@ function App() {
       const response = await fetch('/demo/review.json')
       if (!response.ok) throw new Error('Failed to load the sample review.')
       const data: Review = await response.json()
+      if (uploadedUrl.current) await writeDraft()
+      draft.current = undefined
       const saved = reset ? {} : loadDecisions()
       if (reset) saveDecisions(saved)
       if (uploadedUrl.current) URL.revokeObjectURL(uploadedUrl.current)
@@ -69,7 +77,17 @@ function App() {
   }
 
   useEffect(() => {
-    void loadSample()
+    void readDraft().then(saved => {
+      if (!saved) return loadSample()
+      draft.current = saved
+      const url = URL.createObjectURL(saved.file)
+      uploadedUrl.current = url
+      setPdfUrl(url)
+      setReview(saved.review)
+      setDecisions(saved.decisions)
+      const first = saved.review.metrics.find(row => !saved.decisions[row.id]) ?? saved.review.metrics[0]
+      select(first, saved.decisions[first.id])
+    }).catch(() => loadSample())
     fetch('/api/health').then(async response => {
       if (response.ok && response.headers.get('content-type')?.includes('application/json')) {
         setLocal((await response.json()).status === 'ok')
@@ -77,6 +95,12 @@ function App() {
     }).catch(() => {})
     return () => { if (uploadedUrl.current) URL.revokeObjectURL(uploadedUrl.current) }
   }, [])
+
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(() => setNotice(''), 4500)
+    return () => window.clearTimeout(timer)
+  }, [notice])
 
   function record(status: Decision['status']) {
     if (!metric || !review || (status === 'Approved' && !source)) return
@@ -88,8 +112,12 @@ function App() {
     setDecisions(next)
     if (pdfUrl === samplePdf) saveDecisions(next)
     setNotice(`${metric.name}: ${status.toLowerCase()}.`)
+    if (draft.current) {
+      draft.current = {...draft.current, decisions: next}
+      void writeDraft(draft.current).catch(() => setNotice('Browser storage failed. Export before closing this tab.'))
+    }
     const nextOpen = [...review.metrics.slice(review.metrics.indexOf(metric) + 1), ...review.metrics].find(row => !next[row.id])
-    if (filter === 'open' && nextOpen) select(nextOpen)
+    if (nextOpen) select(nextOpen)
     else {
       if (filter === 'open') setFilter('all')
       setReopening(false)
@@ -105,9 +133,17 @@ function App() {
     setUploading(true)
     setUploadError('')
     try {
+      if (file.size > 20 * 1024 * 1024) throw new Error('Choose a PDF smaller than 20 MB.')
+      setReading('Reading document…')
+      let data: Review
+      if (local) {
       const response = await fetch('/api/extract', { method: 'POST', body: form })
-      const data = await response.json()
-      if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Unable to extract this document.')
+      data = await response.json()
+      if (!response.ok) throw new Error('Unable to extract this PDF. Check its size, format and encryption.')
+      } else { data = await importPdf(file, String(form.get('period')), setReading) }
+      const newDraft = {file, review: data, decisions: {}}
+      await writeDraft(newDraft)
+      draft.current = newDraft
       if (uploadedUrl.current) URL.revokeObjectURL(uploadedUrl.current)
       const url = URL.createObjectURL(file)
       uploadedUrl.current = url
@@ -128,10 +164,10 @@ function App() {
   return <>
     <header className="topbar">
       <div className="top-inner">
-        <div className="brand"><img src="/folio.svg" alt=""/><span>folio<span className="brand-dot">.</span></span></div>
+        <div className="brand"><span className="brand-symbol"><Layers3 size={22}/></span><span>folio<span className="brand-dot">.</span></span></div>
         <span className="header-divider"/>
-        <span className="workspace-label">Evidence workspace</span>
-        <span className="demo-tag">{pdfUrl === samplePdf ? 'Fictional deal demo' : 'Local PDF review'}</span>
+        <span className="workspace-label">Document intelligence</span>
+        <span className="demo-tag">{pdfUrl === samplePdf ? 'Sample workspace' : 'Local PDF review'}</span>
       </div>
     </header>
     <main className="workspace">
@@ -140,13 +176,13 @@ function App() {
       {review && <>
         <section className="hero" aria-label="Review overview">
           <div>
-            <div className="eyebrow"><ClipboardList size={15}/> INVESTMENT DILIGENCE</div>
+            <div className="eyebrow"><Files size={14}/> Workspace <ChevronRight size={13}/> Financial review</div>
             <h1>{review.title}</h1>
-            <p className="hero-copy">Verify extracted figures against the source before exporting.</p>
+            <p className="hero-copy" hidden>Financial evidence review</p>
             <div className="metadata"><span><FileText size={15}/>{review.pages} pages</span><i/><span>{review.metrics[0]?.period}</span><i/><span>{total} financial metrics</span></div>
           </div>
           <div className="hero-actions">
-            {local && <button className="button secondary" onClick={() => { setUploadError(''); uploadDialog.current?.showModal() }}><UploadCloud size={17}/> Import PDF</button>}
+            {<button className="button secondary" onClick={() => { setUploadError(''); uploadDialog.current?.showModal() }}><UploadCloud size={17}/> Import PDF</button>}
             <button className="button secondary" onClick={() => auditDialog.current?.showModal()}><History size={17}/> Review log</button>
             <button className="button primary" disabled={!canExport} onClick={() => { exportReview(review, decisions); setNotice('Review CSV downloaded.') }}><ArrowDownToLine size={17}/> Export CSV</button>
           </div>
@@ -158,11 +194,12 @@ function App() {
           <div className="progress-right"><strong>{done} <span>/ {total} reviewed</span></strong><progress aria-label="Review progress" max={total} value={done}/></div>
         </div>
 
-        <div className="split">
+        <div className="mobile-switch"><button aria-pressed={mobilePane === 'review'} onClick={() => setMobilePane('review')}><ClipboardList size={16}/>Review figures</button><button aria-pressed={mobilePane === 'document'} onClick={() => setMobilePane('document')}><ScanLine size={16}/>Read document</button></div>
+        <div className="split" data-pane={mobilePane}>
           <div className="left-column">
             <section className="panel queue" aria-label="Extracted metrics">
               <div className="section-heading">
-                <div><h2>Extracted metrics</h2><p>Select a metric to inspect its evidence.</p></div>
+                <div><h2>Extracted metrics</h2><p>Choose a figure to review its source.</p></div>
                 <div className="filter" aria-label="Filter metrics">
                   <button aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>All</button>
                   <button aria-pressed={filter === 'open'} onClick={() => { setFilter('open'); const first = review.metrics.find(row => !decisions[row.id]); if (first && decisions[selected]) select(first) }}>Open</button>
@@ -190,7 +227,7 @@ function App() {
               <p className={`reason ${metric.status}`}>{metric.status !== 'ready' && <CircleAlert size={16}/>}<span>{metric.reason}</span></p>
               <div className="source-list">
                 {metric.evidence.map((item, index) => <button className="source-card" key={index} aria-pressed={item === source}
-                  onClick={() => { setSource(item); setPage(item.page) }}>
+                  onClick={() => { setSource(item); setPage(item.page); setMobilePane('document') }}>
                   <span className="source-main"><strong>{formatAmount(item.value)}</strong><span>{item.basis}</span></span>
                   <span className="source-page">Page {item.page}<ChevronRight size={15}/></span>
                   <span className="quote">{item.quote}</span>
@@ -214,8 +251,8 @@ function App() {
           <Document url={pdfUrl} filename={review.filename} page={page} pages={review.pages} onPage={setPage} source={source}/>
         </div>
         <footer className="footer">
-          <span><PanelTop size={15}/> Folio · Portfolio prototype by Dhia Eddine Mahdaoui</span>
-          <button className="text-button" onClick={() => { if (pdfUrl !== samplePdf || window.confirm('Reset all decisions for the sample review?')) void loadSample(pdfUrl === samplePdf) }}><RotateCcw size={14}/> {pdfUrl === samplePdf ? 'Reset sample review' : 'Return to sample'}</button>
+          <span><PanelTop size={15}/> Folio · Dhia Eddine Mahdaoui</span>
+          <button className="text-button" onClick={() => { if (window.confirm(pdfUrl !== samplePdf ? 'Remove this imported draft and return to the sample?' : 'Reset all decisions for the sample review?')) void loadSample(pdfUrl === samplePdf) }}><RotateCcw size={14}/> {pdfUrl === samplePdf ? 'Reset sample review' : 'Return to sample'}</button>
         </footer>
         <dialog ref={auditDialog} className="modal" aria-labelledby="log-title">
           <div className="modal-head"><h2 id="log-title">Review log</h2><button className="icon-button" aria-label="Close review log" onClick={() => auditDialog.current?.close()}><X size={20}/></button></div>
@@ -227,12 +264,13 @@ function App() {
         </dialog>
         <dialog ref={uploadDialog} className="modal" aria-labelledby="import-title">
           <div className="modal-head"><h2 id="import-title">Import a PDF</h2><button className="icon-button" aria-label="Close upload" disabled={uploading} onClick={() => uploadDialog.current?.close()}><X size={20}/></button></div>
-          <p>Use a text-readable PDF up to 20 MB and 500 pages. The extractor supports lines such as <strong>FY2025 reported Revenue: £128.4m</strong>.</p>
+          <p>Review a text-readable PDF up to 20 MB and 500 pages. This browser saves your current PDF and decisions. Importing another PDF or returning to the sample replaces that draft. The extractor supports lines such as <strong>FY2025 reported Revenue: £128.4m</strong>.</p>
+          <p><a href={samplePdf} download>Download the 400-page example PDF</a></p>
           <form className="upload-form" onSubmit={upload}>
             <label>PDF file<input type="file" name="file" accept="application/pdf,.pdf" required disabled={uploading}/></label>
             <label>Fiscal year<input type="number" name="period" min="2000" max="2099" defaultValue="2025" required disabled={uploading}/></label>
             {uploadError && <p role="alert">{uploadError}</p>}
-            <button className="button primary" disabled={uploading}><UploadCloud size={17}/>{uploading ? 'Extracting…' : 'Extract evidence'}</button>
+            <button className="button primary" disabled={uploading}><UploadCloud size={17}/>{uploading ? reading : 'Extract evidence'}</button>
           </form>
         </dialog>
       </>}

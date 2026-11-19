@@ -23,11 +23,11 @@ python3 -m venv .venv
 .venv/bin/python -m uvicorn folio.api:app --host 127.0.0.1 --port 8793
 ```
 
-Open [localhost:8793](http://127.0.0.1:8793). **Import PDF** activates when the FastAPI server is available. The upload runs through the same extractor as the hosted sample. For a quick check, import the bundled PDF at `public/demo/northfield-fy2025.pdf`; change the fiscal year to 2024 to see the earlier sources and missing values. The [OpenAPI UI](http://127.0.0.1:8793/docs) exposes the request and response schema.
+Open [localhost:8793](http://127.0.0.1:8793). **Import PDF** uses FastAPI on the local server. The hosted app reads the PDF in the browser with PDF.js and saves the active document and decisions in IndexedDB. The upload runs through the same extractor as the hosted sample. For a quick check, import the bundled PDF at `public/demo/northfield-fy2025.pdf`; change the fiscal year to 2024 to see the earlier sources and missing values. The [OpenAPI UI](http://127.0.0.1:8793/docs) exposes the request and response schema.
 
 The extractor recognizes four explicitly labelled GBP-million metrics from text lines such as `FY2025 reported Revenue: £128.4m`. It preserves exact source text, PDF page, normalized bounding box, fiscal year and reporting basis. Conflicting non-forecast values require a reviewer note. A forecast or provisional value also requires a note before approval. Export stays locked until every metric has a decision. Exclusions appear in the CSV with a blank amount and the reviewer's reason.
 
-Uploads are processed on the local server and stay in the current workspace session. The prototype uses deterministic rules with no model calls or OCR. PDFs with narrative-only figures, complex tables, or scanned pages may return missing fields. The review log shows the latest decision for each metric. The local server is intended to bind to loopback.
+The browser restores the latest imported review after reload. Returning to the sample clears that imported draft. The prototype uses deterministic rules with no model calls or OCR. PDFs with narrative-only figures, complex tables, or scanned pages may return missing fields. The review log shows the latest decision for each metric. The local server is intended to bind to loopback.
 
 ## Reproduce and verify
 
