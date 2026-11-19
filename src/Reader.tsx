@@ -1,6 +1,6 @@
 import {useEffect,useMemo,useState} from 'react'
 import {Search,Download,Plus,Bookmark,ChevronLeft,Trash2} from 'lucide-react'
-import {findings,receiptCheck,type Finding} from './findings'
+import {analyzeLines,receiptCheck,type Finding} from './findings'
 import {Document} from './Document'
 import {change,download,scanPage,type Figure,type Line,type RecordFile} from './register'
 
@@ -10,9 +10,10 @@ export function Reader({initial,back}:{initial:RecordFile;back:()=>void}){
   useEffect(()=>{const u=URL.createObjectURL(initial.file);setUrl(u);return()=>URL.revokeObjectURL(u)},[initial.file])
   const [exporting,setExporting]=useState(false)
   const [proposal,propose]=useState<Finding>(),[scanning,scan]=useState(false),[showAll,displayAll]=useState(false)
-  const suggested=useMemo(()=>findings(doc.lines),[doc.lines])
+  const analysis=useMemo(()=>analyzeLines(doc.lines),[doc.lines])
+  const suggested=analysis.items
   const check=receiptCheck(suggested)
-  const reviewed=(f:Finding)=>doc.figures.some(r=>r.source.page===f.source.page&&r.source.text===f.source.text)
+  const reviewed=(f:Finding)=>doc.figures.some(r=>r.source.page===f.source.page&&r.source.text===f.source.text&&r.source.column===f.source.column)
   const pending=suggested.filter(f=>!reviewed(f))
   const hits=doc.lines.filter(l=>query.trim()?l.text.toLowerCase().includes(query.trim().toLowerCase()):false)
   function capture(l:Line,f?:Figure,candidate?:Finding){propose(candidate);choose(l);setEdit(f);setPage(l.page);setTab('Capture');fail('')}
@@ -36,9 +37,11 @@ export function Reader({initial,back}:{initial:RecordFile;back:()=>void}){
   <aside><nav className="tabs">{['Findings','Search','Register',...(tab==='Capture'?['Capture']:[])].map(t=><button key={t} aria-pressed={t===tab} onClick={()=>setTab(t)}>{t}{t==='Register'?' ('+doc.figures.length+')':''}</button>)}</nav>
   {error&&<p role="alert">{error}</p>}
   {tab==='Findings'&&<section className="finding-pane"><div className="finding-title"><div><small>EXTRACTION</small><h2>Document findings</h2></div><b>{pending.length}</b></div>
+  {analysis.review_flags.length>0&&<p>Review needed · {analysis.review_flags.map(f=>f.replaceAll('_',' ')).join(', ')}</p>}
+  {analysis.checks.length>0&&<details><summary>{analysis.checks.filter(c=>c.status==='passed').length} of {analysis.checks.length} arithmetic checks passed</summary>{analysis.checks.map(c=><p key={c.name+c.period+c.page}>{c.name} · {c.period} · {c.status} (difference {c.difference} {c.unit})</p>)}</details>}
   {check&&<div className="reconcile"><strong>{check.matches?'Receipt total reconciles':'Check receipt total'}</strong><span>{check.calculation} {check.unit}{check.matches?'':' · Difference '+check.difference}</span></div>}
   <div className="queue-filter"><button aria-pressed={!showAll} onClick={()=>displayAll(false)}>To review ({pending.length})</button><button aria-pressed={showAll} onClick={()=>displayAll(true)}>All ({suggested.length})</button></div>
-  <div className="findings">{(showAll?suggested:pending).map((f,i)=><button key={i} onClick={()=>capture(f.source,undefined,f)}><span>{f.label}<small>Page {f.source.page} · {reviewed(f)?'Reviewed':doc.ocrPages?.includes(f.source.page)?'Scan · needs review':'Needs review'}</small></span><strong>{f.amount} <em>{f.unit}</em></strong></button>)}</div>
+  <div className="findings">{(showAll?suggested:pending).map((f,i)=><button key={i} onClick={()=>capture(f.source,undefined,f)}><span>{f.label}<small>{f.period&&f.period+' · '}Page {f.source.page} · {reviewed(f)?'Reviewed':doc.ocrPages?.includes(f.source.page)?'Scan · needs review':'Needs review'}</small></span><strong>{f.amount} <em>{f.unit}</em></strong></button>)}</div>
   {!(showAll?suggested:pending).length&&<p>{suggested.length?'Review queue complete.':'No supported fields identified. Search the text, read a scanned page, or select an area of the PDF.'}</p>}
   <div className="scan-actions"><button disabled={scanning} onClick={async()=>{scan(true);fail('');try{setDoc(await scanPage(doc,page))}catch(e){fail(e instanceof Error?e.message:'Could not recognize this page.')}finally{scan(false)}}}>{scanning?'Reading scan…':'Run OCR on page '+page}</button><button onClick={()=>capture({page,text:'',box:[0,0,0,0]})}>Add figure</button></div></section>}
   {tab==='Search' &&<><label className="search"><Search/><input placeholder="Find a word or figure" aria-label="Search document" value={query} onChange={e=>{search(e.target.value);setLimit(30)}}/></label>

@@ -35,7 +35,7 @@ def npm_tar(archive, target, member=None):
 
 for path in ['dist/client', 'server', 'desktop/skills']:
     shutil.copytree(root / path, dest / path)
-for path in ['package.json','src/findings.ts','desktop/cli.mjs','desktop/agents.mjs','desktop/launch.mjs']:
+for path in ['package.json','src/findings.ts','src/statements.ts','desktop/cli.mjs','desktop/agents.mjs','desktop/launch.mjs']:
     copy_file(root / path, dest / path)
 copy_file(args.node_license, dest / 'licenses/node.txt')
 

@@ -1,5 +1,6 @@
 import {getDocument, Util} from 'pdfjs-dist'
-export type Line = {page:number; text:string; box:[number,number,number,number]}
+type Word = {text:string; start:number; end:number; box:[number,number,number,number]}
+export type Line = {words?:Word[]; column?:number;page:number; text:string; box:[number,number,number,number]}
 export type Figure = {id:string; label:string; amount:string; unit:string; period:string; note:string; source:Line; saved:string}
 export type RecordFile = {id:string; name:string; pages:number; added:string; file:File; lines:Line[]; figures:Figure[]; ocrPages?:number[]}
 type Header = Pick<RecordFile,'id'|'name'|'pages'|'added'> & {count:number}
@@ -83,7 +84,9 @@ export async function indexPdf(file:File,onProgress:(message:string)=>void):Prom
           box[0]=Math.min(box[0],rect[0]/viewport.width);box[1]=Math.min(box[1],rect[1]/viewport.height)
           box[2]=Math.max(box[2],rect[2]/viewport.width);box[3]=Math.max(box[3],rect[3]/viewport.height)
         }
-        lines.push({page:pageNumber,text:items.map(i=>i.text).join(' '),box})
+        let offset=0
+        const words=items.map(({text,rect})=>{const start=offset;offset+=text.length+1;return {text,start,end:offset-1,box:[rect[0]/viewport.width,rect[1]/viewport.height,rect[2]/viewport.width,rect[3]/viewport.height] as Line['box']}})
+        lines.push({page:pageNumber,text:items.map(i=>i.text).join(' '),box,words})
       }
       page.cleanup()
     }

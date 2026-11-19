@@ -30,7 +30,7 @@ export function writeWorkbook(doc:RecordFile){
   for(const f of doc.figures)figures.push([f.label,f.amount.replace(/[^0-9]/g,'').length<=15?Number(f.amount):f.amount,f.unit,f.period,doc.name,f.source.page,f.source.text,f.note,f.saved])
   const evidence:(string|number)[][]=[['Metric','Extracted value','Unit','Period','Page','Evidence','Status']]
   for(const f of findings(doc.lines)){
-    const reviewed=doc.figures.some(r=>r.source.page===f.source.page&&r.source.text===f.source.text)
+    const reviewed=doc.figures.some(r=>r.source.page===f.source.page&&r.source.text===f.source.text&&r.source.column===f.source.column)
     evidence.push([f.label,f.amount,f.unit,f.period,f.source.page,f.source.text,reviewed?'Reviewed':'Needs review'])
   }
   const parts:Record<string,string>={

@@ -1,3 +1,4 @@
+import {extractStatement,isStatementHeading,validateStatements} from './statements.ts'
 import type { Line } from './register'
 
 export type Finding = {label:string; amount:string; unit:string; period:string; source:Line}
@@ -17,7 +18,7 @@ const fields: [string, RegExp][] = [
 ]
 const money:Record<string,string>={N:'NGN','₦':'NGN','£':'GBP','€':'EUR','$':'$', '₺':'TRY'}
 const number=/^(?:(NGN|USD|GBP|EUR|TRY|MYR|RM|N|₦|£|€|\$|₺)\s*)?(-?\d[\d,]*(?:\.\d+)?)(?:\s*(%|trillion|billion|million|thousand|kobo|USD|GBP|EUR|MYR|TRY|NGN))?(?=$|[\s,;.)])/i
-export function findings(lines:Line[]):Finding[]{
+function narrative(lines:Line[]):Finding[]{
   const output:Finding[]=[]
   const seen=new Set<string>()
   const year=lines.slice(0,100).map(l=>l.text).join(' ').match(/(?:financial |fiscal )?year ended\s+\d{1,2}\s+\w+\s+(20\d{2})/i)?.[1]
@@ -64,3 +65,28 @@ export function receiptCheck(items:Finding[]){
   const difference=cents(total[0])-terms.slice(0,-1).reduce((sum,f)=>sum+cents(f),0)
   return {matches:difference===0,difference:(difference/100).toFixed(2),unit:total[0].unit,calculation:terms.slice(0,-1).map(f=>f.amount).join(' + ')+' vs '+total[0].amount}
 }
+
+export function analyzeLines(lines:Line[]){
+  const pages=new Map<number,Line[]>()
+  for(const l of lines){const p=pages.get(l.page)??[];p.push(l);pages.set(l.page,p)}
+  const tables:ReturnType<typeof extractStatement>=[]
+  const rest:Line[]=[]
+  const issues=new Set<string>()
+  for(const rows of pages.values()){
+    if(rows.some(l=>isStatementHeading(l.text))){
+      const starts=rows.flatMap((l,i)=>isStatementHeading(l.text)?[i]:[])
+      const fields=starts.flatMap((start,i)=>extractStatement(rows.slice(i===0?0:start,starts[i+1])))
+      if(!fields.length)issues.add('unresolved_statement')
+      tables.push(...fields)
+      for(const f of fields)for(const flag of f.review_flags)issues.add(flag)
+    }else{rest.push(...rows)}
+  }
+  const other=narrative(rest).map(f=>({...f,review_flags:[...(!f.period?['missing_period']:[]),...(!f.unit?['missing_unit']:[])]}))
+  for(const f of other)for(const flag of f.review_flags)issues.add(flag)
+  const checks=validateStatements(tables)
+  if(checks.some(c=>c.status==='failed'))issues.add('arithmetic_mismatch')
+  const items=[...tables,...other]
+  const status=!items.length?'no_findings':issues.size?'partial':'extracted'
+  return {items,checks,review_flags:[...issues],extraction_status:status}
+}
+export function findings(lines:Line[]):Finding[]{return analyzeLines(lines).items}

@@ -1,19 +1,30 @@
-import { findings,receiptCheck } from '../src/findings.ts'
+import { analyzeLines,receiptCheck } from '../src/findings.ts'
 
 const byteLimit=8*1024*1024
+const selection={metric:{type:'string',description:'Optional canonical metric, e.g. net_income'},page:{type:'integer',minimum:1,description:'Optional source page'},offset:{type:'integer',minimum:0},limit:{type:'integer',minimum:1,description:'Maximum findings returned. Use next_offset to continue.'}}
 const inputs={
-  analyze_text:{description:'Extract proposed financial and receipt fields from page-ordered text. Returns amount, unit, period and source evidence.',inputSchema:{type:'object',properties:{pages:{type:'array',items:{type:'string'},minItems:1,maxItems:150}},required:['pages']}},
-  analyze_pdf:{description:'Extract fields from a base64 PDF (up to 6 MiB). Reports pages requiring OCR.',inputSchema:{type:'object',properties:{pdf_base64:{type:'string',description:'PDF bytes encoded as base64'}},required:['pdf_base64']}}
+  analyze_text:{description:'Extract proposed financial and receipt fields from page-ordered text. Returns amount, unit, period and source evidence.',inputSchema:{type:'object',properties:{...selection,pages:{type:'array',items:{type:'string'},minItems:1,maxItems:150}},required:['pages']}},
+  analyze_pdf:{description:'Extract fields from a base64 PDF (up to 6 MiB). Reports pages requiring OCR.',inputSchema:{type:'object',properties:{...selection,pdf_base64:{type:'string',description:'PDF bytes encoded as base64'}},required:['pdf_base64']}}
 }
 function textAnalysis(pages){
   if(!Array.isArray(pages)||!pages.length||pages.length>150||pages.some(p=>typeof p!=='string')||pages.reduce((n,p)=>n+p.length,0)>1500000)throw Error('Provide 1–150 text pages totaling up to 1.5 million characters.')
   const lines=pages.flatMap((p,i)=>p.split(/\r?\n/).map(text=>({page:i+1,text:text.trim(),box:[0,0,0,0]})).filter(l=>l.text))
-  const fields=findings(lines)
-  return {pages:pages.length,receipt_check:receiptCheck(fields)??null,findings:fields.map(({source,...f})=>({...f,source:{page:source.page,text:source.text}})),needs_ocr:pages.flatMap((p,i)=>p.trim().length<24?[i+1]:[])}
+  return resultFor(pages,lines)
+}
+function resultFor(pages,lines){
+  const {items,checks,review_flags,extraction_status}=analyzeLines(lines)
+  const sparse=pages.flatMap((p,i)=>p.trim().length<24?[i+1]:[])
+  return {pages:pages.length,coverage:pages.map((_,i)=>({page:i+1,observations:items.filter(f=>f.source.page===i+1).length})),extraction_status:sparse.length&&items.length?'partial':extraction_status,review_flags:sparse.length?[...review_flags,'sparse_page']:review_flags,
+    arithmetic_checks:checks,receipt_check:receiptCheck(items)??null,findings:items.map(({source,...f})=>{
+      const {words,box,...evidence}=source
+      return {...f,source:{...evidence,...(box?.some(Boolean)?{box}:{})}}
+    }),needs_ocr:sparse}
+
 }
 async function pdfAnalysis(bytes,readPdf){
   if(!bytes.length||bytes.length>byteLimit||new TextDecoder().decode(bytes.slice(0,5))!=='%PDF-')throw Error('Provide a valid PDF up to 8 MiB.')
-  return textAnalysis(await readPdf(bytes))
+  const pages=await readPdf(bytes)
+  return resultFor(pages.map(p=>p.text),pages.flatMap(p=>p.lines))
 }
 async function boundedBody(req){
   if(Number(req.headers.get('Content-Length'))>byteLimit)throw Error('Request exceeds 8 MiB.')
@@ -61,6 +72,12 @@ export async function service(req,readPdf){
         if(msg.params?.name==='analyze_text')result=textAnalysis(args?.pages)
         else if(msg.params?.name==='analyze_pdf'&&typeof args?.pdf_base64==='string')result=await pdfAnalysis(Uint8Array.from(atob(args.pdf_base64),c=>c.charCodeAt(0)),readPdf)
         else throw Error('Unknown tool or invalid arguments.')
+        const {metric,page,offset=0,limit}=args
+        if((metric!==undefined&&typeof metric!=='string')||(page!==undefined&&(!Number.isInteger(page)||page<1))||!Number.isInteger(offset)||offset<0||(limit!==undefined&&(!Number.isInteger(limit)||limit<1)))throw Error('Invalid result selection.')
+        const matched=result.findings.filter(f=>(!metric||f.metric===metric)&&(!page||f.source.page===page))
+        result.findings=matched.slice(offset,limit===undefined?undefined:offset+limit)
+        result.matched_count=matched.length
+        result.next_offset=offset+result.findings.length<matched.length?offset+result.findings.length:null
         return reply({content:[{type:'text',text:JSON.stringify(result)}]})
       }catch(e){return reply({isError:true,content:[{type:'text',text:e.message}]})}
     }
