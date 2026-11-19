@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from folio.api import app
 from folio.extract import extract
 
-PDF = Path(__file__).resolve().parents[1] / "public" / "demo" / "northfield-fy2025.pdf"
+PDF = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "northfield-fy2025.pdf"
 
 
 class TestWorkflow(unittest.TestCase):

@@ -6,7 +6,7 @@ import pymupdf
 from folio.extract import extract
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "public" / "demo"
+OUT = ROOT / "tests" / "fixtures"
 OUT.mkdir(parents=True, exist_ok=True)
 TITLE = "Northfield Components"
 SPECIAL = {
