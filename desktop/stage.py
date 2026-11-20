@@ -35,7 +35,7 @@ def npm_tar(archive, target, member=None):
 
 for path in ['dist/client', 'server', 'desktop/skills']:
     shutil.copytree(root / path, dest / path)
-for path in ['package.json','src/findings.ts','src/statements.ts','desktop/cli.mjs','desktop/agents.mjs','desktop/launch.mjs']:
+for path in ['package.json','folio/docling_layout.py','src/findings.ts','src/statements.ts','src/bridgeCatalog.ts','desktop/cli.mjs','desktop/agents.mjs','desktop/launch.mjs']:
     copy_file(root / path, dest / path)
 copy_file(args.node_license, dest / 'licenses/node.txt')
 
@@ -57,7 +57,7 @@ def package(name):
     for dep in info.get('dependencies',{}):
         package(dep)
 
-for name in ['pdfjs-dist','tesseract.js','@napi-rs/canvas']:
+for name in ['pdfjs-dist','tesseract.js','ws','@napi-rs/canvas']:
     package(name)
 if args.target == 'windows':
     npm_tar(args.canvas,dest / 'node_modules/@napi-rs/canvas-win32-x64-msvc')

@@ -1,3 +1,4 @@
+import {resources,workspaceTools} from '../src/bridgeCatalog.ts'
 import { analyzeLines,receiptCheck } from '../src/findings.ts'
 
 const byteLimit=8*1024*1024
@@ -17,7 +18,7 @@ function resultFor(pages,lines){
   const sparse=pages.flatMap((p,i)=>p.trim().length<24?[i+1]:[])
   return {pages:pages.length,coverage:pages.map((_,i)=>({page:i+1,observations:items.filter(f=>f.source.page===i+1).length})),extraction_status:sparse.length&&items.length?'partial':extraction_status,review_flags:sparse.length?[...review_flags,'sparse_page']:review_flags,
     arithmetic_checks:checks.map(({total,operands,...check})=>check),receipt_check:receipt?(({total,operands,...check})=>check)(receipt):null,findings:items.map(({source,...f})=>{
-      const {words,box,...evidence}=source
+      const {words,box,rawText,...evidence}=source
       return {...f,source:{...evidence,...(box?.some(Boolean)?{box}:{})}}
     }),needs_ocr:sparse}
 
@@ -27,8 +28,8 @@ async function pdfAnalysis(bytes,readPdf){
   const pages=await readPdf(bytes)
   return resultFor(pages.map(p=>p.text),pages.flatMap(p=>p.lines))
 }
-async function boundedBody(req){
-  if(Number(req.headers.get('Content-Length'))>byteLimit)throw Error('Request exceeds 8 MiB.')
+export async function boundedBody(req,maxBytes=byteLimit){
+  if(Number(req.headers.get('Content-Length'))>maxBytes)throw Error(`Request exceeds ${maxBytes/1024/1024} MiB.`)
   const reader=req.body?.getReader()
   if(!reader)throw Error('Request body required.')
   let size=0
@@ -37,7 +38,7 @@ async function boundedBody(req){
     const {done,value}=await reader.read()
     if(done)break
     size+=value.length
-    if(size>byteLimit){await reader.cancel();throw Error('Request exceeds 8 MiB.')}
+    if(size>maxBytes){await reader.cancel();throw Error(`Request exceeds ${maxBytes/1024/1024} MiB.`)}
     chunks.push(value)
   }
   const result=new Uint8Array(size)
@@ -46,11 +47,11 @@ async function boundedBody(req){
   return result
 }
 const json=(data,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}})
-export async function service(req,readPdf){
+export async function service(req,readPdf,bridge){
   const path=new URL(req.url).pathname
   if(!['/api/v2','/api/v2/analyze','/mcp'].includes(path))return
-  if(req.method==='GET'&&path==='/api/v2')return json({name:'Folio',version:2,analyze:{method:'POST',path:'/api/v2/analyze',inputs:['application/pdf (binary)','application/json {"pages":["line-separated page text"]}'],limit:'8 MiB, 150 pages'},mcp:{method:'POST',path:'/mcp',tools:Object.keys(inputs)},review:'All findings require source verification. needs_ocr lists pages with insufficient extractable text.'})
-  if(req.method!=='POST')return json({error:'POST required'},405)
+  if(req.method==='GET'&&path==='/api/v2')return json({name:'Folio',version:2,analyze:{method:'POST',path:'/api/v2/analyze',inputs:['application/pdf (binary)','application/json {"pages":["line-separated page text"]}'],limit:'8 MiB, 150 pages'},mcp:{method:'POST',path:'/mcp',protocol:'2026-07-28',tools:[...Object.keys(inputs),...Object.keys(workspaceTools).filter(name=>bridge?.allowed(name))]},review:'All findings require source verification. needs_ocr lists pages with insufficient extractable text.'})
+  if(req.method!=='POST')return new Response(null,{status:405,headers:{Allow:'POST'}})
   if(req.headers.get('Origin')&&req.headers.get('Origin')!==new URL(req.url).origin)return json({error:'Origin rejected'},403)
   let msg
   try{
@@ -60,16 +61,51 @@ export async function service(req,readPdf){
     if(path==='/api/v2/analyze')return json(textAnalysis(msg?.pages))
     if(path!=='/mcp')return json({error:'Unknown operation'},404)
     if(!msg||msg.jsonrpc!=='2.0'||typeof msg.method!=='string')return json({jsonrpc:'2.0',id:null,error:{code:-32600,message:'Invalid request'}},400)
-    const reply=result=>json({jsonrpc:'2.0',id:msg.id,result})
+    const wireVersion = req.headers.get('MCP-Protocol-Version')
+    const envelopeVersion = msg.params?._meta?.['io.modelcontextprotocol/protocolVersion'] ??
+      msg._meta?.['io.modelcontextprotocol/protocolVersion']
+    const modern = wireVersion==='2026-07-28' || envelopeVersion==='2026-07-28'
+    const cache = modern ? {ttlMs:0,cacheScope:'PRIVATE'} : {}
+    const serverInfo = {name:'folio',version:'2.0.0'}
+    const capabilities = {tools:{},...(bridge ? {resources:{}} : {})}
+    const reply=result=>json({jsonrpc:'2.0',id:msg.id,result:modern ? {
+      ...result,_meta:{...result._meta,'io.modelcontextprotocol/serverInfo':serverInfo},
+    } : result})
+    const error=(code,message,status=200)=>json({jsonrpc:'2.0',id:msg.id,error:{code,message}},status)
+    if(modern && (wireVersion!=='2026-07-28' || envelopeVersion && envelopeVersion!==wireVersion || req.headers.get('Mcp-Method')!==msg.method ||
+      msg.method==='tools/call' && req.headers.get('Mcp-Name')!==msg.params?.name ||
+      msg.method==='resources/read' && req.headers.get('Mcp-Name')!==msg.params?.uri)) {
+      return error(-32020,'MCP routing headers must match the request.',400)
+    }
     if(msg.method.startsWith('notifications/')&&msg.id===undefined)return new Response(null,{status:202})
-    if(msg.method==='server/discover')return reply({supportedVersions:['2026-07-28'],capabilities:{tools:{}}})
-    if(msg.method==='initialize')return reply({protocolVersion:['2025-11-25','2025-06-18','2025-03-26'].includes(msg.params?.protocolVersion)?msg.params.protocolVersion:'2025-11-25',capabilities:{tools:{}},serverInfo:{name:'folio',version:'2.0.0'}})
+    if(msg.method==='server/discover')return reply({supportedVersions:['2026-07-28'],capabilities,...cache})
+    if(msg.method==='initialize' && !modern) return reply({protocolVersion:['2025-11-25','2025-06-18','2025-03-26'].includes(msg.params?.protocolVersion)?msg.params.protocolVersion:'2025-11-25',capabilities,serverInfo})
     if(msg.method==='ping')return reply({})
-    if(msg.method==='tools/list')return reply({tools:Object.entries(inputs).map(([name,d])=>({name,...d}))})
+    if(msg.method==='resources/list' && bridge)return reply({resources,...cache})
+    if(msg.method==='resources/read' && bridge){
+      const resource=resources.find(value=>value.uri===msg.params?.uri)
+      if(!resource)return error(-32002,'Unknown resource.')
+      try {
+        const result=await bridge.call(resource.uri)
+        return reply({...cache,contents:[{uri:resource.uri,mimeType:resource.mimeType,text:JSON.stringify(result)}]})
+      } catch(cause) {return error(-32002,cause.message)}
+    }
+    if(msg.method==='tools/list'){
+      const definitions={...inputs,...Object.fromEntries(Object.entries(workspaceTools).filter(([name])=>bridge?.allowed(name)))}
+      return reply({...cache,tools:Object.entries(definitions).sort(([a],[b])=>a.localeCompare(b)).map(([name,d])=>({name,...d}))})
+    }
     if(msg.method==='tools/call'){
       const args=msg.params?.arguments
       try{
         let result
+        const name=msg.params?.name
+        if(Object.hasOwn(workspaceTools,name)&&bridge){
+          if(args!==undefined&&(!args||typeof args!=='object'||Array.isArray(args)))throw Error('Tool arguments must be an object.')
+          const agent=msg.params?._meta?.['io.modelcontextprotocol/clientInfo']?.name ??
+            msg._meta?.['io.modelcontextprotocol/clientInfo']?.name
+          result=await bridge.call(name,args,typeof agent==='string' ? agent.slice(0,120) : 'Agent',true)
+          return reply({content:[{type:'text',text:JSON.stringify(result)}],structuredContent:result})
+        }
         if(msg.params?.name==='analyze_text')result=textAnalysis(args?.pages)
         else if(msg.params?.name==='analyze_pdf'&&typeof args?.pdf_base64==='string')result=await pdfAnalysis(Uint8Array.from(atob(args.pdf_base64),c=>c.charCodeAt(0)),readPdf)
         else throw Error('Unknown tool or invalid arguments.')

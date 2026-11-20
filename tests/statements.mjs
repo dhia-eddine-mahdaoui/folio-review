@@ -19,3 +19,39 @@ const unresolved=await analyze([rows[1],rows.at(-1)])
 assert.equal(unresolved.extraction_status,'partial')
 for(const flag of ['missing_currency','missing_scale','missing_period'])assert(unresolved.review_flags.includes(flag))
 console.log('Statement regression checks passed.')
+for (const finding of good.findings.filter(f=>f.metric==='net_income')) {
+  assert.equal(finding.source.row_label,'Net income')
+  assert.equal(finding.canonical_metric,'Net Income (US-GAAP)')
+  assert.equal(finding.source.text,`Net income · ${finding.amount} · ${finding.period}`)
+  assert.deepEqual(finding.source.header_lines,[finding.period])
+}
+
+const row = (text, parts, top) => {
+  let offset = 0
+  return {page:1,text,box:[0,top,1,top+.02],words:parts.map(([word,left,right])=>{
+    const start = text.indexOf(word,offset)
+    offset = start+word.length
+    return {text:word,start,end:offset,box:[left,top,right,top+.02]}
+  })}
+}
+const {extractStatement} = await import('../src/statements.ts')
+const {applyLayout} = await import('../src/layout.ts')
+const located = [
+  row('Statements of Operations',[],.1),
+  row('(In USD millions)',[],.15),
+  row('Twelve Months Ended',[],.2),
+  row('December 31, 2025 December 31, 2024',[['December 31, 2025',.63,.77],['December 31, 2024',.80,.94]],.23),
+  row('Net income 14.4',[['Net income',.1,.3],['14.4',.855,.885]],.26),
+]
+const sparseTable = extractStatement(located)
+assert.equal(sparseTable[0].end_date,'2024-12-31')
+assert.match(sparseTable[0].source.text,/14\.4 · .*2024/)
+const table = {page:1,cells:[
+  {row:0,column:1,span:1,text:'December 31, 2025',box:[.63,.23,.77,.25]},
+  {row:0,column:2,span:1,text:'December 31, 2024',box:[.80,.23,.94,.25]},
+  {row:1,column:0,span:1,text:'Net income',box:[.10,.26,.30,.28]},
+  {row:1,column:2,span:1,text:'14.4',box:[.63,.26,.66,.28]},
+]}
+const docling = extractStatement(applyLayout(located,[table]))
+assert.equal(docling[0].end_date,'2024-12-31')
+assert.deepEqual(docling[0].source.cell_box,[.63,.26,.66,.28])

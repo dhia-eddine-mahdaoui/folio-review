@@ -5,30 +5,34 @@ import {Button} from '@astryxdesign/core/Button'
 import {Badge} from '@astryxdesign/core/Badge'
 import {SegmentedControl, SegmentedControlItem} from '@astryxdesign/core/SegmentedControl'
 import {Tab, TabList} from '@astryxdesign/core/TabList'
-import {ArrowLeft, ArrowUpRight, Check, ChevronRight, ClipboardCheck, Crosshair, FileText, ScanLine, Search, ShieldAlert} from 'lucide-react'
-import {analyzeLines, receiptCheck, type Finding} from './findings'
+import {ArrowLeft, Check, ChevronRight, ClipboardCheck, FileText, ScanLine, Search, ShieldAlert} from 'lucide-react'
+import {analyzeLines, type Finding} from './findings'
 import {Document, type Annotation} from './Document'
 import {change, downloadRegister, indexedRegion, readRegion, scanPage, type Figure, type Line, type RecordFile} from './register'
-import {defaultReasons, findingKey, findingStatus, priorities, reviewedFinding, workpaperFindings, type Assignment, type AuditEvent, type Disposition, type Priority} from './review'
+import {defaultReasons, findingKey, findingStatus, priorities, queueCounts, statuses, reviewedFinding, workpaperFindings, type Assignment, type AuditEvent, type Disposition, type Priority} from './review'
 import type {Preferences} from './preferences'
+import {formattedAmount, scaleName, sourceScale} from './amount'
+import {risk} from './triage'
+import type {AgentDraft} from './agentDraft'
+import {QueueStatus, StatusPill} from './QueueStatus'
 import {WorkpaperRegister} from './WorkpaperRegister'
 
 type TabName = 'Verify' | 'Queue' | 'Search'
 type Capture = {line:Line; figure?:Figure; finding?:Finding; manualId?:string}
-type Rule = {name:string; total:Finding; operands:{finding:Finding; sign:number}[]}
+import {includes,variance,reconciliation,type Rule} from './reconciliation'
 const captureFinding = (finding:Finding, figures:Figure[]): Capture => {
   const figure = reviewedFinding(finding,figures)
   return {finding,figure,line:figure?.source ?? finding.source}
 }
 function nextFinding(doc:RecordFile) {
   return workpaperFindings(analyzeLines(doc.lines).items, doc.figures, doc.exclusions, doc.assignments)
-    .find(finding => findingStatus(finding, doc.figures, doc.exclusions) === 'To review')
+    .find(finding => findingStatus(finding, doc.figures, doc.exclusions) === 'Pending')
 }
 
-export function Reader({initial, initialFigure, back, settings, onChange}: {
-  initial:RecordFile; initialFigure?:string; back:()=>void; settings:Preferences; onChange:()=>void
+export function Reader({initial, initialFigure, back, settings, onSettings, onChange}: {
+  initial:RecordFile; initialFigure?:string; back:()=>void; settings:Preferences; onSettings:(settings:Preferences)=>void; onChange:(doc:RecordFile)=>void
 }) {
-  const [doc,setDoc] = useState(initial)
+  const doc = initial
   const [selection,setSelection] = useState<Capture | undefined>(() => {
     const figure = initial.figures.find(figure => figure.id === initialFigure)
     if (figure) return {figure,line:figure.source,finding:figure.original}
@@ -38,11 +42,15 @@ export function Reader({initial, initialFigure, back, settings, onChange}: {
   const [page,setPage] = useState(selection?.line.page ?? 1)
   const [tab,setTab] = useState<TabName>(selection ? 'Verify' : 'Queue')
   const [url,setUrl] = useState('')
-  const [pane,setPane] = useState('review')
-  const [queue,setQueue] = useState(selection ? 'To review' : 'All')
-  const [currentReviewer,setCurrentReviewer] = useState(settings.reviewer)
+  const [queue,setQueue] = useState(initialFigure ? 'Verified' : selection ? 'Pending' : 'All')
+  const currentReviewer = settings.reviewer.trim()
+  const [session,setSession] = useState<Finding[]>(()=>workpaperFindings(analyzeLines(initial.lines).items,initial.figures,initial.exclusions,initial.assignments)
+    .filter(candidate=>findingStatus(candidate,initial.figures,initial.exclusions)===(initialFigure ? 'Verified' : 'Pending')))
+  const [formula,setFormula] = useState<Rule>()
+  const [confirmScan,setConfirmScan] = useState(false)
   const [assignee,setAssignee] = useState('')
   const [priority,setPriority] = useState('')
+  const [triage,setTriage] = useState('')
   const [failure,setFailure] = useState('')
   const [query,setQuery] = useState('')
   const [limit,setLimit] = useState(40)
@@ -62,20 +70,19 @@ export function Reader({initial, initialFigure, back, settings, onChange}: {
   const anchor = figure ? 'figure-' + figure.id : key ?? selection?.manualId ?? 'capture'
   const decision = key ? doc.exclusions?.[key] : undefined
   const assignment = key ? doc.assignments?.[key] : undefined
+  const draft = key ? doc.drafts?.[key] : undefined
 
   const analysis = useMemo(()=>analyzeLines(doc.lines),[doc.lines])
-  const receipt = useMemo(()=>receiptCheck(analysis.items),[analysis])
-  const rules:Rule[] = useMemo(()=>[...analysis.checks,...(receipt ? [{name:'Receipt total',...receipt}] : [])],[analysis,receipt])
+  const rules = useMemo(()=>reconciliation(analysis),[analysis])
   const findings = useMemo(()=>workpaperFindings(analysis.items,doc.figures,doc.exclusions,doc.assignments),[analysis,doc.figures,doc.exclusions,doc.assignments])
-  const statuses = ['To review','On hold','Escalated','Excluded','Verified']
   const statusOf = (candidate:Finding) => findingStatus(candidate,doc.figures,doc.exclusions)
-  const pending = findings.filter(candidate=>statusOf(candidate)==='To review')
-  const unresolved = findings.filter(candidate=>['On hold','Escalated'].includes(statusOf(candidate))).length
+  const counts = queueCounts(findings,doc.figures,doc.exclusions)
   const visible = findings.filter(candidate=>{
     const id = findingKey(candidate)
     const assigned = doc.assignments?.[id]
     return (queue==='All' || queue===statusOf(candidate)) &&
       (!assignee || (assignee==='unassigned' ? !assigned?.assignee : 'name:'+assigned?.assignee===assignee)) &&
+      (!triage || risk(candidate,rules,doc.figures,settings.triage)===triage) &&
       (!priority || (assigned?.priority ?? 'Normal')===priority) &&
       (!failure || failure === doc.exclusions?.[id]?.code ||
         failure === 'Arithmetic Variance' && rules.some(rule=>includes(rule,candidate) && variance(rule,doc.figures)?.failed) ||
@@ -119,13 +126,14 @@ export function Reader({initial, initialFigure, back, settings, onChange}: {
     grid.addEventListener('scroll',update,true)
     update()
     return ()=>{cancelAnimationFrame(frame);resize.disconnect();grid.removeEventListener('scroll',update,true)}
-  },[formLinked,page,tab,pane,anchor])
+  },[formLinked,page,tab,anchor])
 
-  function open(capture: Capture) {
+  function open(capture: Capture, group?:Finding[]) {
+    if (group) setSession(group)
+    setFormula(undefined)
     setSelection(capture.finding || capture.figure ? capture : {...capture,manualId:crypto.randomUUID()})
     setPage(capture.line.page)
     setTab('Verify')
-    setPane('review')
     setDisposition(undefined)
     setHover(undefined)
     setError('')
@@ -144,10 +152,7 @@ export function Reader({initial, initialFigure, back, settings, onChange}: {
         return {...record,history:[...(previous.history ?? []),{...event,id:crypto.randomUUID(),saved}]}
       })
       if (!updated) throw Error()
-      setDoc(updated)
-      const last = updated.history?.at(-1)
-      if (last?.reviewer) setCurrentReviewer(last.reviewer)
-      onChange()
+      onChange(updated)
       return updated
     } catch {
       setError('This change could not be saved. Reopen the workpaper and try again.')
@@ -156,27 +161,42 @@ export function Reader({initial, initialFigure, back, settings, onChange}: {
     }
   }
 
-  async function save(next:Figure, advance:boolean, remove=false) {
+  async function save(next:Figure, advance:boolean, remove=false, routing?:Pick<Assignment,'assignee'|'priority'>, approved?:AgentDraft) {
     const reviewer = next.reviewer?.trim() || currentReviewer
     if (!reviewer) return setError('Enter your reviewer ID.')
     const updated = await commit((previous,saved)=>{
+      if (key && previous.drafts?.[key]?.id!==approved?.id) throw Error()
+      if (approved && (approved.run!==previous.extractionRuns?.[next.source.page] || approved.baseDecision!==decision?.saved)) throw Error()
+      const drafts = {...previous.drafts}
+      if (approved && key) delete drafts[key]
       const before = previous.figures.find(value=>value.id===next.id)
       if (figure && before?.saved!==figure.saved) throw Error()
-      if (!figure && finding && (reviewedFinding(finding,previous.figures) || previous.exclusions?.[findingKey(finding)]?.reason)) throw Error()
+      if (key && (previous.exclusions?.[key]?.saved!==decision?.saved || previous.assignments?.[key]?.saved!==assignment?.saved)) throw Error()
+      if (!figure && finding && (reviewedFinding(finding,previous.figures) || decision?.reason && !['On hold','Escalated'].includes(decision.status ?? ''))) throw Error()
+      const assignments = {...previous.assignments}
+      const exclusions = {...previous.exclusions}
+      const priorRouting = key ? assignments[key] : undefined
+      if (key && finding && routing && (routing.assignee!==(priorRouting?.assignee ?? '') || routing.priority!==(priorRouting?.priority ?? 'Normal'))) {
+        assignments[key] = {...routing,finding,saved}
+      }
+      if (key && !remove) delete exclusions[key]
       const after = remove ? undefined : {...next,reviewer,saved}
       return {
-        record:{...previous,figures:[...previous.figures.filter(value=>value.id!==next.id),...(after ? [after] : [])]},
-        event:{action:remove?'Delete figure':before?'Edit figure':'Verify figure',reviewer,reason:remove?'Removed from register':next.changeReason ?? '',original:next.original,before,after},
+        record:{...previous,assignments,exclusions,drafts,figures:[...previous.figures.filter(value=>value.id!==next.id),...(after ? [after] : [])]},
+        event:{draft:approved,action:remove?'Delete figure':before?'Edit figure':'Verify figure',reviewer,reason:remove?'Removed from register':next.changeReason ?? '',original:next.original,before,after,routing:key && assignments[key]!==priorRouting ? assignments[key] : undefined},
       }
     })
     setDeleting(undefined)
     if (!updated) return
     setAnnouncement(remove ? 'Figure deleted.' : 'Figure saved to the register.')
-    const position = pending.findIndex(candidate=>findingKey(candidate)===key)
-    const ordered = position<0 ? pending : [...pending.slice(position+1),...pending.slice(0,position)]
-    const following = advance && ordered.find(candidate=>findingStatus(candidate,updated.figures,updated.exclusions)==='To review')
+    const position = session.findIndex(candidate=>findingKey(candidate)===key)
+    const ordered = [...session.slice(position+1),...session.slice(0,Math.max(0,position))]
+    const following = advance && ordered.find(candidate=>findingStatus(candidate,updated.figures,updated.exclusions)==='Pending')
     if (following) open(captureFinding(following,updated.figures))
-    else {setSelection(undefined);setTab('Queue')}
+    else if (!remove) {
+      const saved = updated.figures.find(value=>value.id===next.id)
+      if (saved) openFigure(saved)
+    } else {setSelection(undefined);setTab('Queue')}
   }
 
   async function setDecision(reason:string|null, reviewer:string, code?:string, status?:Disposition) {
@@ -192,26 +212,38 @@ export function Reader({initial, initialFigure, back, settings, onChange}: {
     if (!updated) return
     setAnnouncement(status ? 'Finding updated to ' + status.toLowerCase() + '.' : 'Finding returned to the review queue.')
     setDisposition(undefined)
-    if (status) {setQueue(status);setSelection(undefined);setTab('Queue')}
-    else setQueue('To review')
   }
 
-  async function assign(value:string, priority:Priority, reviewer:string) {
-    if (!key || !finding) return
-    if (!reviewer) return setError('Enter your reviewer ID.')
-    const updated = await commit((previous,saved)=>{
-      const before = previous.assignments?.[key]
-      if (before?.saved!==assignment?.saved) throw Error()
-      const after = {assignee:value,priority,saved,finding}
-      return {record:{...previous,assignments:{...previous.assignments,[key]:after}},
-        event:{action:'Update assignment',reason:'',reviewer,original:finding,before,after}}
-    })
-    if (updated) setAnnouncement('Assignment saved.')
+  async function reviewDraft(proposal:AgentDraft,approve:boolean) {
+    if (!finding || !key || !currentReviewer) return setError('Enter your reviewer ID.')
+    if (approve) {
+      if (proposal.run!==finding.source.extraction_run_id || proposal.run!==doc.extractionRuns?.[finding.source.page] ||
+        proposal.baseDecision!==decision?.saved) return setError('The source or review status changed. Reject this draft and request a new proposal.')
+      const edited:Figure = {id:crypto.randomUUID(),label:proposal.changes.canonicalMetric?.trim() ?? finding.canonical_metric ?? finding.label,
+        verbatimLabel:finding.source_label ?? finding.label,amount:proposal.changes.amount ?? finding.amount,unit:finding.unit,period:finding.period,
+        note:proposal.changes.note ?? '',source:finding.source,saved:new Date().toISOString(),original:finding,findingKey:key,changeReason:proposal.rationale}
+      await save(edited,false,false,undefined,proposal)
+    } else {
+      await commit(previous=>{
+        if (previous.drafts?.[key]?.id!==proposal.id) throw Error()
+        const drafts = {...previous.drafts}
+        delete drafts[key]
+        return {record:{...previous,drafts},event:{action:'Reject draft',reviewer:currentReviewer,
+          reason:proposal.rationale,original:finding,draft:proposal}}
+      })
+    }
+  }
+
+  function move(offset:number) {
+    const position = session.findIndex(candidate=>findingKey(candidate)===key)
+    const next = session[position+offset]
+    if (next) open(captureFinding(next,doc.figures))
   }
 
   function hostedEndpoint() {
+    if (settings.ocr==='mistral') return '/api/local/mistral-ocr'
     if (settings.ocr!=='hosted') return undefined
-    if (!settings.endpoint) throw Error('Set an HTTPS OCR endpoint in Agent MCP & Skill.')
+    if (!settings.endpoint) throw Error('Set an HTTPS OCR endpoint in Agent MCP & Bridge.')
     return settings.endpoint
   }
 
@@ -227,12 +259,23 @@ export function Reader({initial, initialFigure, back, settings, onChange}: {
         const matches = await readRegion(doc,page,box,endpoint)
         if (!matches.length) throw Error('No readable text was found in the selected area.')
         const confidences = matches.flatMap(match => match.confidence === undefined ? [] : [match.confidence])
-        applyRegion({page,box,text:matches.map(match=>match.text).join(' '),ocr:true,
+        applyRegion({page,box,extraction_run_id:doc.extractionRuns?.[page],text:matches.map(match=>match.text).join(' '),ocr:true,
           confidence:confidences.length===matches.length ? Math.min(...confidences) : undefined})
       } else {
         const updated = await scanPage(doc,page,currentReviewer,endpoint)
-        setDoc(updated)
-        onChange()
+        setFormula(undefined)
+        if (line?.page===page && !figure) {
+          const replacementById = new Map(analyzeLines(updated.lines).items.filter(candidate=>candidate.source.page===page).map(candidate=>[findingKey(candidate),candidate]))
+          const fresh = key ? replacementById.get(key) : undefined
+          setSession(candidates=>candidates.flatMap(candidate=>{
+            if (candidate.source.page!==page) return [candidate]
+            const replacement = replacementById.get(findingKey(candidate))
+            return replacement ? [replacement] : []
+          }))
+          if (fresh) open(captureFinding(fresh,updated.figures))
+          else {setSelection(undefined);setTab('Queue')}
+        }
+        onChange(updated)
         setAnnouncement('Updated searchable text on page ' + page + '.')
       }
     } catch (cause) {
@@ -244,9 +287,8 @@ export function Reader({initial, initialFigure, back, settings, onChange}: {
 
   function applyRegion(source:Line) {
     const current = tab==='Verify' && selection && !decision?.reason ? selection : undefined
-    if (current) {
-      setSelection({...current,line:{...source,column:current.line.column}})
-      setPane('review')
+    if (current && !current.line.column) {
+      setSelection({...current,line:source})
     } else open({line:source})
     setAnnouncement('Selected source text captured.')
   }
@@ -261,6 +303,11 @@ export function Reader({initial, initialFigure, back, settings, onChange}: {
     }
   }
 
+  const run = doc.extractionRuns?.[page]
+  const activeSource = (source:Line) => source.page===page && source.extraction_run_id===run
+  const formulaBoxes = formula ? [formula.total,...formula.operands.map(item=>item.finding)]
+    .map(item=>reviewedFinding(item,doc.figures)?.source ?? item.source)
+    .filter(source=>activeSource(source) && source.box[2]>source.box[0]).map(source=>source.box) : []
   const annotations:Annotation[] = []
   const mapped = new Map<string,Annotation>()
   for (const candidate of findings.filter(candidate=>candidate.source.page===page)) {
@@ -269,16 +316,17 @@ export function Reader({initial, initialFigure, back, settings, onChange}: {
     const status = statusOf(candidate)
     if (verified || !heatmap && id!==anchor || status==='Excluded' && id!==anchor) continue
     const source = id===anchor && line?.page===page ? line : candidate.source
+    if (!activeSource(source)) continue
     const fromOCR = source.ocr || doc.ocrPages?.includes(source.page)
     const high = candidate.period && candidate.unit && !candidate.review_flags?.length && !flagged.has(id) &&
       (fromOCR ? (source.confidence ?? 0)>=90 : !!source.words?.length || 'cell_box' in source && !!source.cell_box) &&
-      status==='To review'
+      status==='Pending'
     mapped.set(id,{id,box:source.box,label:`${candidate.label} · ${candidate.amount} · ${candidate.period || 'Unknown period'} · ${high ? fromOCR ? 'High OCR confidence' : 'Direct PDF evidence' : 'Review required'}`,
       tone:high?'confident':'review',activate:()=>open(captureFinding(candidate,doc.figures))})
   }
   for (const saved of doc.figures.filter(saved=>saved.source.page===page)) {
     const id = 'figure-'+saved.id
-    if (!heatmap && id!==anchor) continue
+    if ((!heatmap && id!==anchor) || !activeSource(id===anchor && line?.page===page ? line : saved.source)) continue
     mapped.set(id,{id,box:id===anchor && line?.page===page ? line.box : saved.source.box,label:`${saved.label} · ${saved.amount} · Verified`,tone:'verified',activate:()=>openFigure(saved)})
   }
   const bounds = new Map<string,Annotation>()
@@ -293,49 +341,81 @@ export function Reader({initial, initialFigure, back, settings, onChange}: {
   const failureReasons = [...new Set([...settings.reasons,...Object.values(doc.exclusions ?? {}).flatMap(entry=>entry.code ? [entry.code] : []),
     'Arithmetic Variance','Ambiguous period','Low OCR confidence'])]
   const reviewer = currentReviewer
-  const queuePosition = key && pending.findIndex(candidate=>findingKey(candidate)===key)
+  const queuePosition = session.findIndex(candidate=>findingKey(candidate)===key)
+  useEffect(()=>{
+    function shortcut(event:KeyboardEvent) {
+      const target = event.target
+      if (event.defaultPrevented || event.repeat || event.isComposing || working || deleting || confirmScan ||
+        target instanceof HTMLElement && target.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="dialog"]')) return
+      if (event.key==='Enter' && (event.metaKey || event.ctrlKey)) {
+        const button = desk.current?.querySelector<HTMLButtonElement>('[data-save-next]')
+        if (button) {event.preventDefault();button.click()}
+        return
+      }
+      if (event.altKey || event.ctrlKey || event.metaKey) return
+      if (event.code==='Space' && !(target instanceof HTMLElement && target.closest('button,a'))) {
+        event.preventDefault()
+        setHeatmap(value=>!value)
+      } else if (event.key==='[' || event.key===']') {
+        event.preventDefault()
+        move(event.key===']' ? 1 : -1)
+      } else if (tab==='Verify' && !draft && finding && !figure && statusOf(finding)!=='Excluded') {
+        if (event.key.toLowerCase()==='e') setDisposition(event.shiftKey ? 'Escalated' : 'Excluded')
+        if (event.key.toLowerCase()==='h') setDisposition('On hold')
+      }
+    }
+    window.addEventListener('keydown',shortcut)
+    return ()=>window.removeEventListener('keydown',shortcut)
+  })
+
 
   return <div className="reader">
-    <header className="reader-heading">
+    <div className="reader-primary"><header className="reader-heading">
       <div className="reader-title"><Button label="Back to documents" variant="ghost" icon={<ArrowLeft size={17}/>} isIconOnly onClick={back}/>
-        <FileText size={19}/><div><h1 title={doc.name}>{doc.name}</h1><p>{doc.pages} pages · {pending.length} to review · {doc.figures.length} verified{unresolved ? ` · ${unresolved} unresolved` : ''}</p></div>
+        <FileText size={19}/><div><h1 title={doc.name}>{doc.name}</h1><QueueStatus counts={counts}/></div>
         {doc.sample && <Badge label="Sample"/>}
       </div>
       <div className="reader-tools">
-        <Button label={heatmap ? 'Heatmap on' : 'Heatmap off'} icon={<Crosshair size={15}/>} size="sm" aria-pressed={heatmap} onClick={()=>setHeatmap(!heatmap)}/>
-        <Button label={scanning ? 'Reading…' : 'OCR retry'} tooltip={settings.ocr==='hosted' ? 'Send this page image to your configured OCR endpoint' : 'Run local OCR on this page'} size="sm" icon={<ScanLine size={15}/>} isLoading={scanning} isDisabled={busy} onClick={()=>void recognize()}/>
+        <label className="reviewer-chip">Reviewer <input aria-label="Reviewer" value={settings.reviewer} maxLength={120}
+          placeholder="Set name" onChange={event=>onSettings({...settings,reviewer:event.target.value})}/></label>
+        <div className="heatmap"><span>Heatmap</span><SegmentedControl label="Heatmap" value={heatmap?'on':'off'} onChange={value=>setHeatmap(value==='on')}>
+          <SegmentedControlItem value="on" label="ON"/><SegmentedControlItem value="off" label="OFF"/>
+        </SegmentedControl><kbd>Space</kbd></div>
+        <Button label={scanning ? 'Reading…' : 'Re-index OCR'} size="sm" icon={<ScanLine size={15}/>} isLoading={scanning}
+          isDisabled={busy} onClick={()=>doc.figures.some(value=>value.source.page===page) ? setConfirmScan(true) : void recognize()}/>
       </div>
     </header>
-    <div className="reader-mobile"><SegmentedControl label="Visible workspace pane" value={pane} onChange={setPane}>
-      <SegmentedControlItem value="review" label="Review"/><SegmentedControlItem value="pdf" label="Source PDF"/>
-    </SegmentedControl></div>
     <p className="sr-only" role="status">{announcement}</p>
     {error && <div role="alert" className="notice error">{error}</div>}
-    <div className="desk" data-pane={pane} ref={desk}>
+    <div className="desk" ref={desk}>
       <div className="document-pane">{url && <Document url={url} filename={doc.name} pages={doc.pages} page={page} onPage={setPage}
         onRegion={box=>void recognize(box)} annotations={annotations} selected={line?.page===page ? anchor : undefined} linked={formLinked}
         onLink={id=>{setHover(id); if (!id) setConnector('')}}
-        source={line && {page:line.page,quote:line.text,box:line.box,value:'',basis:''}}/>}</div>
+        run={run} formulaBoxes={formulaBoxes} source={line && activeSource(line) ? {page:line.page,quote:line.text,box:line.box,value:'',basis:''} : undefined}/>}</div>
       <Card padding={0} className="review-pane" role="complementary" aria-label="Review workspace">
         <div className="review-tabs">
           <TabList role="tablist" aria-label="Review views" value={tab} onChange={value=>{setTab(value as TabName);setHover(undefined)}} hasDivider>
             {(['Verify','Queue','Search'] as const).filter(name=>name!=='Verify' || selection).map(name=><Tab key={name} id={'review-tab-'+name} value={name} panelId={'review-panel-'+name}
-              label={name==='Queue' ? `Queue (${pending.length+unresolved})` : name}/>)}
+              label={name==='Queue' ? `Queue (${counts.Pending})` : name}/>)}
           </TabList>
         </div>
         <div className="review-content" id={'review-panel-'+tab} role="tabpanel" aria-labelledby={'review-tab-'+tab}>
           {tab==='Queue' && <>
-            <div className="review-heading"><div><h2>Review queue</h2><p>{visible.length} of {findings.length} findings</p></div>
+            <div className="review-heading"><div><h2>Review queue</h2><QueueStatus counts={counts}/><p>{visible.length} of {findings.length} findings</p></div>
               <Button label="Add figure" size="sm" onClick={()=>open({line:{page,text:'',box:[0,0,0,0]}})} isDisabled={working}/></div>
             <div className="queue-filters">
               <select aria-label="Queue status" value={queue} onChange={event=>setQueue(event.target.value)}>
-                {['All',...statuses].map(status=><option key={status} value={status}>{status} ({status==='All' ? findings.length : findings.filter(candidate=>statusOf(candidate)===status).length})</option>)}
+                {['All',...statuses].map(status=><option key={status} value={status}>{status} ({status==='All' ? findings.length : counts[status as keyof typeof counts]})</option>)}
               </select>
               <select aria-label="Filter by assignee" value={assignee} onChange={event=>setAssignee(event.target.value)}>
                 <option value="">All assignees</option><option value="unassigned">Unassigned</option>
                 {[...new Set(Object.values(doc.assignments ?? {}).map(value=>value.assignee).filter(Boolean))].sort().map(name=><option key={name} value={'name:'+name}>{name}</option>)}</select>
               <select aria-label="Filter by priority" value={priority} onChange={event=>setPriority(event.target.value)}>
                 <option value="">All priorities</option>{priorities.map(value=><option key={value}>{value}</option>)}</select>
+              <select aria-label="Filter by triage" value={triage} onChange={event=>setTriage(event.target.value)}>
+                <option value="">All confidence levels</option><option value="Low-Risk">Low-Risk</option>
+                <option value="Exception">Variances &amp; Low-Confidence Exceptions</option>
+              </select>
               <select aria-label="Filter by failure reason" value={failure} onChange={event=>setFailure(event.target.value)}>
                 <option value="">All failure reasons</option>{failureReasons.map(reason=><option key={reason}>{reason}</option>)}</select>
             </div>
@@ -346,9 +426,11 @@ export function Reader({initial, initialFigure, back, settings, onChange}: {
               })}</details>}
             <div className="findings">{visible.map(candidate=>{
               const id = findingKey(candidate), status = statusOf(candidate), assigned = doc.assignments?.[id]
-              return <button key={id} onClick={()=>open(captureFinding(candidate,doc.figures))}>
-                <span><strong>{candidate.label}</strong><small>{[candidate.period,`p. ${candidate.source.page}`,assigned?.assignee,assigned?.priority,candidate.source.ocr?'OCR':''].filter(Boolean).join(' · ')}</small>
-                  {status!=='To review' && <span className={`status-pill ${status==='Verified' ? 'verified' : 'review'}`}>{status}</span>}</span>
+              return <button key={id} onClick={()=>open(captureFinding(candidate,doc.figures),visible)}>
+                <span><strong>{candidate.source_label ?? candidate.label}</strong><small>{[candidate.period,`p. ${candidate.source.page}`,assigned?.assignee,assigned?.priority,candidate.source.ocr?'OCR':''].filter(Boolean).join(' · ')}</small>
+                  <StatusPill status={status}/>
+                  {doc.drafts?.[id] && <span className="status-pill review">Agent draft</span>}
+                  {risk(candidate,rules,doc.figures,settings.triage)==='Low-Risk' && <span className="status-pill verified">Low-Risk</span>}</span>
                 <span className="finding-value"><b>{candidate.amount}</b><small>{candidate.unit}</small></span><ChevronRight size={15}/>
               </button>
             })}</div>
@@ -364,35 +446,47 @@ export function Reader({initial, initialFigure, back, settings, onChange}: {
           </>}
           {tab==='Verify' && line && <>
             <div className="review-heading capture-heading"><div>
-              <h2>{figure ? 'Edit verified figure' : decision?.reason ? decision.status ?? 'Excluded finding' : finding ? 'Verify finding' : 'Capture figure'}</h2>
-              <p>{typeof queuePosition==='number' && queuePosition>=0 ? `Item ${queuePosition+1} of ${pending.length} · ` : ''}Page {line.page}</p>
-            </div><Button className="mobile-source" label="View source" icon={<ArrowUpRight size={14}/>} onClick={()=>{setPage(line.page);setPane('pdf')}}/></div>
-            {decision?.reason && !figure ? <form className="entry" onSubmit={event=>{
-              event.preventDefault();void setDecision(null,String(new FormData(event.currentTarget).get('reviewer') ?? '').trim())
+              <h2>{figure ? 'Edit verified figure' : finding ? 'Verify finding' : 'Capture figure'}</h2>
+              <p>{queuePosition>=0 ? `Item ${queuePosition+1} of ${session.length} · ` : ''}Page {line.page} {finding && <StatusPill status={statusOf(finding)}/>}</p>
+            </div>{queuePosition>=0 && <div className="finding-nav">
+              <Button size="sm" label="Previous finding" isIconOnly icon={<kbd>[</kbd>} onClick={()=>move(-1)} isDisabled={queuePosition===0}/>
+              <Button size="sm" label="Next finding" isIconOnly icon={<kbd>]</kbd>} onClick={()=>move(1)} isDisabled={queuePosition===session.length-1}/>
+            </div>}</div>
+            {draft && finding ? <section className="agent-draft" aria-label="Proposed by Agent (Draft)">
+              <strong>Proposed by Agent (Draft)</strong><small>{draft.agent}</small>
+              <dl>{Object.entries(draft.changes).map(([field,value])=><div className="draft-row" key={field}>
+                <dt>{field==='canonicalMetric' ? 'Canonical Metric' : field==='amount' ? 'Value' : 'Notes'}</dt>
+                <dd><s>{field==='canonicalMetric' ? finding.canonical_metric ?? finding.label : field==='amount' ? finding.amount : '—'}</s>
+                  {' → '}{value}{field==='amount' && ' '+finding.unit}</dd></div>)}</dl>
+              <p>{draft.rationale}</p>
+              <div className="secondary-actions"><Button label="Approve & Verify" variant="primary" className="save-action" onClick={()=>void reviewDraft(draft,true)} isDisabled={working}/>
+                <Button label="Reject Draft" onClick={()=>void reviewDraft(draft,false)} isDisabled={working}/></div>
+            </section> : decision?.reason && statusOf(finding!)==='Excluded' && !figure ? <form className="entry" onSubmit={event=>{
+              event.preventDefault();void setDecision(null,reviewer)
             }}>
               <div className="source-quote"><small>Source evidence</small><p>{line.text}</p></div>
               <div className="source-quote"><small>{decision.code ?? 'Decision reason'}</small><p>{decision.reason}</p><small>{decision.reviewer}</small></div>
-              <label>Reviewer ID<input name="reviewer" required defaultValue={reviewer} maxLength={120}/></label>
               <Button type="submit" label="Return to review queue" variant="primary" isLoading={busy}/>
             </form> : disposition ? <form className="entry" onSubmit={event=>{
               event.preventDefault()
               const data = new FormData(event.currentTarget)
               const code = String(data.get('code') ?? '')
               const note = String(data.get('reason') ?? '').trim()
-              void setDecision(note || code,String(data.get('reviewer') ?? '').trim(),code,disposition)
+              void setDecision(note || code,reviewer,code,disposition)
             }}>
               <strong>{disposition==='On hold' ? 'Place on hold' : disposition==='Excluded' ? 'Exclude finding' : 'Escalate finding'}</strong>
               <label>Reason code<select name="code" aria-label="Reason code" required defaultValue=""><option value="" disabled>Select a reason</option>
                 {(settings.reasons.length ? settings.reasons : defaultReasons).map(reason=><option key={reason}>{reason}</option>)}</select></label>
               <label>Details<textarea name="reason" maxLength={1000} placeholder="Add context for the next reviewer"/></label>
-              <label>Reviewer ID<input name="reviewer" required defaultValue={reviewer} maxLength={120}/></label>
               <div className="form-actions"><Button label="Cancel" onClick={()=>setDisposition(undefined)} isDisabled={working}/>
                 <Button type="submit" label="Save decision" variant="primary" isLoading={busy} isDisabled={scanning}/></div>
             </form> : <CaptureForm key={anchor} line={line} figure={figure} finding={finding}
-              reviewer={reviewer} working={working} busy={busy} scanning={scanning} hasNext={!!finding && !figure && pending.length>1}
+              reviewer={reviewer} working={working} busy={busy} scanning={scanning} hasNext={!!finding && !figure} triage={finding && risk(finding,rules,doc.figures,settings.triage)} escalated={decision?.status==='Escalated'}
+              verdict={decision?.reason || undefined} formula={formula}
+              onFormula={rule=>{setPage(rule.total.source.page);setFormula(current=>current===rule ? undefined : rule)}}
               rules={scopedRules} figures={doc.figures} assignment={assignment} selected={formLinked}
               onLink={value=>{setHover(value ? anchor : undefined);if (!value) setConnector('')}}
-              onSave={save} onAssign={assign} onDecision={setDisposition} onDelete={id=>id ? setDeleting(id) : setError('Enter your reviewer ID.')}
+              onSave={(value,advance,routing)=>void save(value,advance,false,routing)} onDecision={setDisposition} onDelete={id=>id ? setDeleting(id) : setError('Enter your reviewer ID.')}
               periods={analysis.items.flatMap(value=>value.period ? [value.period] : [])}
               units={analysis.items.flatMap(value=>value.unit ? [value.unit] : [])}
               onError={setError} needsOcr={doc.ocrPages?.includes(line.page)}/>}
@@ -401,56 +495,42 @@ export function Reader({initial, initialFigure, back, settings, onChange}: {
       </Card>
       {formLinked && connector && <svg className="anchor-line" aria-hidden="true"><path d={connector}/></svg>}
     </div>
+    </div>
     <WorkpaperRegister doc={doc} onOpen={openFigure} onExport={(format,figures)=>void exportFile(format,figures)}
       onCsv={figures=>downloadRegister(figures.map(figure=>({figure,document:doc.name})),doc.name.replace(/\.pdf$/i,'')+'-register.csv')}/>
+    <AlertDialog isOpen={confirmScan} onOpenChange={setConfirmScan} title="Re-index OCR?"
+      description="This page has verified figures. Re-indexing replaces the page highlights and retains the original citations in the register."
+      actionLabel="Re-index OCR" onAction={()=>{setConfirmScan(false);void recognize()}}/>
     <AlertDialog isOpen={deleting!==undefined} onOpenChange={value=>{if (!busy && !value) setDeleting(undefined)}} title="Delete verified figure?"
       description="The figure will be removed from the register. Its values and citation will be recorded in Activity history."
       actionLabel="Delete figure" isActionLoading={busy} onAction={()=>figure && deleting && save({...figure,reviewer:deleting},false,true)}/>
   </div>
 }
 
-function includes(rule:Rule, finding:Finding) {
-  const key = findingKey(finding)
-  return [rule.total,...rule.operands.map(item=>item.finding)].some(candidate=>findingKey(candidate)===key)
-}
-
-function variance(rule:Rule, figures:Figure[], draft?:{finding:Finding; amount:string; unit:string; period:string}) {
-  const observed = (finding:Finding) => draft && findingKey(finding)===findingKey(draft.finding) ? draft : reviewedFinding(finding,figures) ?? finding
-  const total = observed(rule.total)
-  const terms = rule.operands.map(item=>({value:observed(item.finding),sign:item.sign}))
-  const values = [total,...terms.map(item=>item.value)]
-  if (values.some(value=>value.unit!==rule.total.unit || value.period!==rule.total.period || !/^-?\d+(\.\d+)?$/.test(value.amount))) return
-  const precision = Math.max(...values.map(value=>value.amount.split('.')[1]?.length ?? 0))
-  const integer = (amount:string) => {
-    const [whole,fraction=''] = amount.replace(/^-/,'').split('.')
-    return BigInt((amount.startsWith('-') ? '-' : '')+whole+fraction.padEnd(precision,'0'))
-  }
-  const difference = integer(total.amount)-terms.reduce((sum,item)=>sum+integer(item.value.amount)*BigInt(item.sign),0n)
-  const absolute = (difference<0n ? -difference : difference).toString().padStart(precision+1,'0')
-  const formatted = precision ? absolute.slice(0,-precision)+'.'+absolute.slice(-precision) : absolute
-  return {failed:difference!==0n,difference:(difference<0n?'-':'')+formatted}
-}
-
-function CaptureForm({line,figure,finding,reviewer,working,busy,scanning,hasNext,rules,figures,assignment,selected,onLink,
-  onSave,onAssign,onDecision,onDelete,periods,units,onError,needsOcr}: {
+function CaptureForm({line,figure,finding,reviewer,working,busy,scanning,hasNext,triage,escalated,verdict,formula,onFormula,rules,figures,assignment,selected,onLink,
+  onSave,onDecision,onDelete,periods,units,onError,needsOcr}: {
   line:Line; figure?:Figure; finding?:Finding; reviewer:string; working:boolean; busy:boolean; scanning:boolean; hasNext:boolean
-  rules:Rule[]; figures:Figure[]; assignment?:Assignment
-  selected:boolean; onLink:(value:boolean)=>void; onSave:(figure:Figure,advance:boolean)=>void
-  onAssign:(assignee:string, priority:Priority, reviewer:string)=>void; onDecision:(value:Disposition)=>void; onDelete:(reviewer:string)=>void
+  rules:Rule[]; figures:Figure[]; assignment?:Assignment; triage?:string; escalated?:boolean; verdict?:string; formula?:Rule; onFormula:(rule:Rule)=>void
+  selected:boolean; onLink:(value:boolean)=>void; onSave:(figure:Figure,advance:boolean,routing:Pick<Assignment,'assignee'|'priority'>)=>void
+  onDecision:(value:Disposition)=>void; onDelete:(reviewer:string)=>void
   periods:string[]; units:string[]; onError:(message:string)=>void; needsOcr?:boolean
 }) {
-  const [amount,setAmount] = useState(figure?.amount ?? finding?.amount ?? '')
-  const [unit,setUnit] = useState(figure?.unit ?? finding?.unit ?? '')
+  const native = figure && sourceScale(figure)
+  const [amount,setAmount] = useState(native?.amount ?? finding?.amount ?? '')
+  const [unit,setUnit] = useState(native?.unit ?? finding?.unit ?? '')
   const [period,setPeriod] = useState(figure?.period ?? finding?.period ?? '')
-  const [label,setLabel] = useState(figure?.label ?? finding?.label ?? line.text.split(/(?:[0-9]|[$£€])/)[0].replace(/[^a-zA-Z)]+$/,'').trim())
+  const [label,setLabel] = useState(figure?.label ?? finding?.canonical_metric ?? finding?.label ?? line.text.split(/(?:[0-9]|[$£€])/)[0].replace(/[^a-zA-Z)]+$/,'').trim())
   const [quote,setQuote] = useState(line.text)
   const [note,setNote] = useState(figure?.note ?? '')
   useEffect(()=>{setQuote(line.text)},[line])
-  const baseline = figure ?? finding
+  const baseline = native ?? (finding && {...finding,label:finding.canonical_metric ?? finding.label})
   const edited = !!baseline && (label.trim()!==baseline.label || amount.trim()!==baseline.amount || unit.trim()!==baseline.unit ||
     period.trim()!==baseline.period || quote.trim()!==baseline.source.text || line.page!==baseline.source.page ||
     line.box.some((value,index)=>value!==baseline.source.box[index]) || !!figure && note.trim()!==figure.note)
   const original = figure?.original ?? finding
+  const verbatim = figure?.verbatimLabel ?? finding?.source_label ?? line.row_label ?? finding?.label
+  const sourceUnit = original?.unit
+  const unitLocked = !!sourceUnit && !original?.review_flags?.includes('missing_currency')
   const weak = !!finding?.review_flags?.length || !!finding && (!finding.period || !finding.unit) ||
     (line.ocr || needsOcr) && (line.confidence ?? 0)<90
   const suggestedPeriods = [...new Set([...periods,...(line.text.match(/\bFY\s*(?:19|20)\d{2}\b|\b(?:19|20)\d{2}\b/gi) ?? [])])]
@@ -461,45 +541,48 @@ function CaptureForm({line,figure,finding,reviewer,working,busy,scanning,hasNext
     const read = (name:string) => String(form.get(name) ?? '').trim()
     const reason = read('change-reason')
     if (!label.trim() || !quote.trim()) return onError('Complete the metric and source evidence.')
+    if (sourceUnit && scaleName(unit)!==scaleName(sourceUnit)) return onError('Keep the value in the source document’s scale.')
     if (edited && !reason) return onError('Enter the reason for changing the figure.')
     onSave({
-      id:figure?.id ?? crypto.randomUUID(),label:label.trim(),amount:amount.trim(),unit:unit.trim(),period:period.trim(),note:note.trim(),
-      source:{...line,text:quote.trim()},saved:new Date().toISOString(),reviewer:read('reviewer'),original,
+      id:figure?.id ?? crypto.randomUUID(),label:label.trim(),verbatimLabel:verbatim,amount:amount.trim(),unit:unit.trim(),period:period.trim(),note:note.trim(),
+      source:{...line,text:quote.trim()},saved:new Date().toISOString(),reviewer,original,
       changeReason:reason,findingKey:figure?.findingKey ?? (finding && findingKey(finding)),
-    }, (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value')==='next')
+    }, (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value')==='next', {assignee:read('assignee'),priority:(read('priority') || 'Normal') as Priority})
   }}>
     <div className="finding-meta">
       <span className={`status-pill ${weak ? 'review' : figure || line.confidence!==undefined ? 'verified' : 'neutral'}`}>
         {line.confidence!==undefined ? `OCR confidence ${Math.round(line.confidence)}%` : line.ocr || needsOcr ? 'OCR confidence unavailable' : 'PDF text layer'}
       </span>
+      {triage==='Low-Risk' && <span className="status-pill verified">Low-Risk</span>}
       {weak && <span className="status-pill review">Review required</span>}
       {finding?.review_flags?.map(flag=><span key={flag} className="meta-flag">{flag.replaceAll('_',' ')}</span>)}
     </div>
-    <label>Metric<input name="label" value={label} maxLength={500} onChange={event=>setLabel(event.target.value)} required/></label>
+    {verdict && <p className="decision-note">{verdict}</p>}
+    {verbatim && <label>Verbatim Label<input value={verbatim} readOnly/></label>}
+    <label>Canonical Metric<input name="label" value={label} maxLength={500} onChange={event=>setLabel(event.target.value)} required/></label>
     <div className="pair">
       <label>Value<input name="amount" value={amount} onChange={event=>setAmount(event.target.value)} required maxLength={80}
         pattern="-?[0-9]+([.][0-9]+)?" inputMode="decimal" list="source-amounts" placeholder="Numeric value"/></label>
-      <label>Unit<input name="unit" value={unit} onChange={event=>setUnit(event.target.value)} maxLength={120} list="source-units" placeholder="Select or enter"/></label>
+      <label>Unit<input name="unit" value={unit} onChange={event=>setUnit(event.target.value)} maxLength={120} readOnly={unitLocked} list="source-units" placeholder="Select or enter"/></label>
     </div>
-    {original && <div className="extracted"><span>Extracted <b>{original.amount}</b> {original.unit}</span>{original.normalized_amount && original.normalized_amount!==original.amount && <span>Normalized <b>{original.normalized_amount}</b></span>}</div>}
-    <label>Reporting period<input name="period" list="source-periods" value={period} onChange={event=>setPeriod(event.target.value)} maxLength={120} placeholder="Select or enter"/></label>
+    <div className="extracted">Normalized <output aria-label="Normalized">{formattedAmount(amount,unit)}</output></div>
+    <label>Reporting period<input name="period" list="source-periods" readOnly={!!line.column_heading} value={period} onChange={event=>setPeriod(event.target.value)} maxLength={120} placeholder="Select or enter"/></label>
     <datalist id="source-periods">{suggestedPeriods.map(value=><option key={value} value={value}/>)}</datalist>
     <datalist id="source-units">{suggestedUnits.map(value=><option key={value} value={value}/>)}</datalist>
     <datalist id="source-amounts">{[...new Set((line.text.match(/(?:\(\d[\d,]*(?:\.\d+)?\)|-?\d[\d,]*(?:\.\d+)?)/g) ?? [])
       .map(value=>value.replaceAll(',','').replace(/^\((.*)\)$/,'-$1')))].slice(0,24).map(value=><option key={value} value={value}/>)}</datalist>
     <label data-source-field className={selected ? 'linked-field' : undefined} onMouseEnter={()=>onLink(true)} onMouseLeave={()=>onLink(false)}
       onFocus={()=>onLink(true)} onBlur={()=>onLink(false)}>
-      Source citation · p. {line.page}<textarea name="quote" required value={quote} maxLength={16000} onChange={event=>setQuote(event.target.value)}
+      Source citation · p. {line.page}<textarea name="quote" required readOnly={!!line.column} value={quote} maxLength={16000} onChange={event=>setQuote(event.target.value)}
         placeholder="Select an area on the PDF or enter source text"/>
     </label>
     {rules.map((rule,index)=>{
       const result = variance(rule,figures,finding && {finding,amount,unit,period})
-      return <div className={`math-check ${result && !result.failed ? 'verified' : 'review'}`} key={index}>
+      return <button type="button" aria-pressed={formula===rule} onClick={()=>onFormula(rule)} className={`math-check ${result && !result.failed ? 'verified' : 'review'}`} key={index}>
         {result && !result.failed ? <Check size={15}/> : <ShieldAlert size={15}/>}
-        <span><strong>{rule.name}</strong> · {result ? result.failed ? `Variance ${result.difference} ${rule.total.unit}` : 'Reconciles' : 'Check units or periods'}</span>
-      </div>
+        <span><strong>{rule.name}</strong> · {result ? result.failed ? `Variance ${result.difference} ${rule.total.unit}` : 'Reconciles' : 'Check units or periods'}{formula===rule && result && <b className="equation">{result.equation}</b>}</span>
+      </button>
     })}
-    <label>Reviewer ID<input name="reviewer" required defaultValue={reviewer} maxLength={120} placeholder="Name or team ID"/></label>
     {edited && <label>Change reason<input name="change-reason" required maxLength={500} placeholder="e.g. Adjusted scale"/></label>}
     <label>Notes<textarea name="note" value={note} maxLength={4000} onChange={event=>setNote(event.target.value)} placeholder="Optional"/></label>
     {finding && <details className="assignment">
@@ -508,25 +591,16 @@ function CaptureForm({line,figure,finding,reviewer,working,busy,scanning,hasNext
         <label>Assignee<input name="assignee" defaultValue={assignment?.assignee} maxLength={120} placeholder="Unassigned"/></label>
         <label>Priority<select name="priority" aria-label="Priority" defaultValue={assignment?.priority ?? 'Normal'}>{priorities.map(value=><option key={value}>{value}</option>)}</select></label>
       </div>
-      <Button size="sm" label="Save assignment" isDisabled={working} onClick={event=>{
-        const form = (event.currentTarget as HTMLButtonElement).form
-        if (!form) return
-        const data = new FormData(form)
-        onAssign(String(data.get('assignee') ?? '').trim(),String(data.get('priority')) as Priority,String(data.get('reviewer') ?? '').trim())
-      }}/>
     </details>}
     <div className="form-actions">
-      <Button type="submit" name="action" value={hasNext ? 'next' : 'save'} label={figure ? 'Save changes' : hasNext ? 'Save & next' : 'Save figure'}
-        variant="primary" className="save-action" icon={<Check size={16}/>} isLoading={busy} isDisabled={scanning}/>
+      <Button type="submit" name="action" data-save-next={hasNext ? '' : undefined} value={hasNext ? 'next' : 'save'} label={escalated ? 'Approve & Verify' : figure ? 'Save changes' : hasNext ? 'Save & next' : 'Save figure'}
+        variant="primary" className="save-action" icon={<Check size={16}/>} endContent={hasNext ? <kbd aria-hidden="true">Ctrl/⌘ ↵</kbd> : undefined} isLoading={busy} isDisabled={scanning}/>
       <div className="secondary-actions">
         {hasNext && <Button type="submit" size="sm" label="Save only" isDisabled={working}/>}
-        {finding && !figure && <><Button size="sm" label="Exclude" onClick={()=>onDecision('Excluded')} isDisabled={working}/>
-          <Button size="sm" label="Hold" onClick={()=>onDecision('On hold')} isDisabled={working}/>
-          <Button size="sm" label="Escalate" onClick={()=>onDecision('Escalated')} isDisabled={working}/></>}
-        {figure && <Button size="sm" label="Delete figure" onClick={event=>{
-          const form = (event.currentTarget as HTMLButtonElement).form
-          if (form) onDelete(String(new FormData(form).get('reviewer') ?? '').trim())
-        }} isDisabled={working}/>}
+        {finding && !figure && <><Button size="sm" label="Exclude" endContent={<kbd aria-hidden="true">E</kbd>} onClick={()=>onDecision('Excluded')} isDisabled={working}/>
+          <Button size="sm" label="Hold" endContent={<kbd aria-hidden="true">H</kbd>} onClick={()=>onDecision('On hold')} isDisabled={working}/>
+          <Button size="sm" label="Escalate" endContent={<kbd aria-hidden="true">⇧E</kbd>} onClick={()=>onDecision('Escalated')} isDisabled={working}/></>}
+        {figure && <Button size="sm" label="Delete figure" onClick={()=>onDelete(reviewer)} isDisabled={working}/>}
       </div>
     </div>
   </form>

@@ -1,7 +1,8 @@
 import {useEffect,useState} from 'react'
 import {Button} from '@astryxdesign/core/Button'
 import {Check, Plug} from 'lucide-react'
-import {storePreferences,type Preferences} from './preferences'
+import {resources,workspaceTools,type WorkspaceTool} from './bridgeCatalog'
+import {type Preferences} from './preferences'
 
 type Agent = {name:string; detected:boolean; installed:boolean; managed:boolean; skill:string|null}
 type LocalAgents = {template:string; installedRuntime:boolean; agents:Agent[]}
@@ -9,7 +10,7 @@ const endpoint = '/api/local/agents'
 const names = ['Codex','Claude Code','Gemini CLI','Cursor']
 const customHeading = '\n## Workspace instructions\n'
 
-export function AgentHub({settings,onSettings}:{settings:Preferences;onSettings:(value:Preferences)=>void}) {
+export function AgentHub({settings,onSettings,connected}:{connected:boolean;settings:Preferences;onSettings:(value:Preferences)=>void}) {
   const [local,setLocal] = useState<LocalAgents>()
   const [target,setTarget] = useState(names[0])
   const [instructions,setInstructions] = useState('')
@@ -39,7 +40,7 @@ export function AgentHub({settings,onSettings}:{settings:Preferences;onSettings:
     setBusy(true)
     setConnection('Connecting to Folio MCP…')
     const request = async (method:string,id:number,params?:object) => {
-      const response = await fetch('/mcp',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream'},
+      const response = await fetch('/mcp',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream','MCP-Protocol-Version':'2026-07-28','Mcp-Method':method},
         body:JSON.stringify({jsonrpc:'2.0',id,method,params}),signal:AbortSignal.timeout(8000)})
       if(!response.ok)throw Error()
       const payload = await response.json()
@@ -47,9 +48,9 @@ export function AgentHub({settings,onSettings}:{settings:Preferences;onSettings:
       return payload.result
     }
     try {
-      const initialized = await request('initialize',1,{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'Folio workspace',version:'1'}})
+      const initialized = await request('server/discover',1)
       const result = await request('tools/list',2)
-      setConnection(`${initialized.serverInfo.name} · ${result.tools.map((tool:{name:string})=>tool.name).join(', ')}`)
+      setConnection(`${initialized._meta?.['io.modelcontextprotocol/serverInfo']?.name ?? 'Folio'} · ${result.tools.map((tool:{name:string})=>tool.name).join(', ')}`)
     } catch {
       setConnection('Folio MCP could not be reached.')
     } finally {
@@ -74,17 +75,39 @@ export function AgentHub({settings,onSettings}:{settings:Preferences;onSettings:
   }
 
   return <div className="hub">
-    <div className="page-heading"><div><h1>Agent MCP &amp; Skill</h1><p>Manage agent connections, reviewer preferences, and OCR.</p></div></div>
+    <div className="page-heading"><div><h1>Agent MCP &amp; Bridge</h1><p>Manage agent connections, reviewer preferences, and OCR.</p></div></div>
     <div className="hub-grid">
       <section className="hub-card">
-        <h2>Folio MCP</h2>
+        <h2>Live MCP Co-Pilot Bridge</h2>
+        <p>2026-07-28 · Streamable HTTP</p>
+        <label className="switch-field"><input type="checkbox" checked={settings.bridge.enabled}
+          onChange={event=>onSettings({...settings,bridge:{...settings.bridge,enabled:event.target.checked}})}/> Share this workspace with local MCP clients</label>
+        <p role="status">{connected ? 'Browser workspace connected' : 'Browser workspace disconnected'}</p>
+        <h3>Workspace resources</h3>
+        <ul>{resources.map(resource=><li key={resource.uri}><code>{resource.uri}</code></li>)}</ul>
+        <h3>Tool consent</h3>
+        {(Object.keys(workspaceTools) as WorkspaceTool[]).map(name=><label key={name} className="switch-field">
+          <input type="checkbox" checked={settings.bridge.tools[name]} onChange={event=>onSettings({...settings,
+            bridge:{...settings.bridge,tools:{...settings.bridge.tools,[name]:event.target.checked}}})}/>
+          <span><code>{name}</code><small>{name==='propose_finding_edit' ? 'Draft approval required' : 'Read only'}</small></span>
+        </label>)}
         <label>Endpoint<input readOnly value={location.origin+'/mcp'} onFocus={event=>event.target.select()}/></label>
         <p>Add this URL as an HTTP MCP server in your agent client.</p>
         <Button label="Test connection" icon={<Plug size={16}/>} onClick={()=>void test()} isLoading={busy}/>
         {connection && <p role="status">{connection}</p>}
       </section>
       <section className="hub-card">
-        <h2>Reviewer and OCR settings</h2>
+        <h2>Confidence &amp; reconciliation auto-triage</h2>
+        <label className="switch-field"><input type="checkbox" checked={settings.triage.lowRisk}
+          onChange={event=>onSettings({...settings,triage:{...settings.triage,lowRisk:event.target.checked}})}/>
+          Classify reconciled PDF text as Low-Risk</label>
+        <label className="switch-field"><input type="checkbox" checked={settings.triage.flagOverlaps}
+          onChange={event=>onSettings({...settings,triage:{...settings.triage,flagOverlaps:event.target.checked}})}/>
+          Flag multi-column alignment issues</label>
+        <h2>Reviewer and extraction settings</h2>
+        <label className="switch-field"><input type="checkbox" checked={settings.docling}
+          onChange={event=>onSettings({...settings,docling:event.target.checked})}/> Use local Docling for table layout on import</label>
+        {settings.docling && <p>Configure FOLIO_DOCLING_PYTHON and FOLIO_DOCLING_MODELS in the local service.</p>}
         <form className="entry" onSubmit={event=>{
           event.preventDefault()
           const data = new FormData(event.currentTarget)
@@ -96,10 +119,9 @@ export function AgentHub({settings,onSettings}:{settings:Preferences;onSettings:
               if(parsed.protocol!=='https:' || parsed.username || parsed.password || parsed.hash)throw Error()
               url = parsed.href
             }
-            const updated:Preferences = {reviewer:String(data.get('reviewer') ?? '').trim(),ocr:mode,endpoint:url,
+            const updated:Preferences = {...settings,reviewer:String(data.get('reviewer') ?? '').trim(),ocr:mode,endpoint:url,
               reasons:[...new Set(String(data.get('reasons') ?? '').split('\n').map(reason=>reason.trim()).filter(Boolean))]}
             if(!updated.reasons.length){setMessage('Enter at least one reason code.');return}
-            storePreferences(updated)
             onSettings(updated)
             setMessage('Workspace preferences saved.')
           } catch {
@@ -109,10 +131,11 @@ export function AgentHub({settings,onSettings}:{settings:Preferences;onSettings:
           <label>Default reviewer ID<input name="reviewer" defaultValue={settings.reviewer} maxLength={120} placeholder="Name or team ID"/></label>
           <label>Exception reason codes <textarea name="reasons" defaultValue={settings.reasons.join('\n')} maxLength={2000} rows={5} required/></label>
           <label>Manual OCR engine<select name="engine" aria-label="Manual OCR engine" value={mode} onChange={event=>setMode(event.target.value as Preferences['ocr'])}>
-            <option value="local">Local English OCR</option><option value="hosted">Hosted OCR endpoint</option>
+            <option value="local">Local English OCR</option><option value="hosted">Hosted OCR endpoint</option><option value="mistral">Mistral OCR 4.1</option>
           </select></label>
           {mode==='hosted' && <><label>Hosted OCR endpoint<input name="endpoint" type="url" defaultValue={settings.endpoint} placeholder="https://…" required/></label>
             <p>OCR retry and unreadable lasso selections send a PNG to this endpoint. Imports use local OCR. The endpoint must allow this origin and return JSON with a <code>lines</code> array of <code>text</code>, normalized <code>box</code> and optional <code>confidence</code> values from 0 to 100.</p></>}
+          {mode==='mistral' && <p>Manual re-indexing sends a PNG to Mistral. Set MISTRAL_API_KEY in the local service.</p>}
           <div><Button type="submit" label="Save preferences" icon={<Check size={16}/>} variant="primary"/></div>
           {message && <p role="status">{message}</p>}
         </form>

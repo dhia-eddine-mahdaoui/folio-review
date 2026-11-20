@@ -13,9 +13,13 @@ import {TextInput} from '@astryxdesign/core/TextInput'
 import {Theme} from '@astryxdesign/core/theme'
 import {neutralTheme} from '@astryxdesign/theme-neutral/built'
 import {ArrowDown, ArrowDownToLine, ArrowRight, ArrowUpRight, BookOpen, CheckCheck, ClipboardList, FileText, FolderOpen, LibraryBig, MoreHorizontal, Plus, Search, Table2, Terminal, Trash2, Upload, X} from 'lucide-react'
-import {list, get, change, indexPdf, downloadRegister, type Figure, type Header, type RecordFile} from './register'
+import {list, get, change, indexPdf, downloadRegister, readRegister, readActivity, summarize, type Figure, type Header, type RecordFile} from './register'
 import {readDraft, writeDraft} from './draft'
-import {preferences} from './preferences'
+import {preferences,storePreferences,preferencesKey} from './preferences'
+import {ActivityTable,IntegrityBadge,useAuditIntegrity} from './ActivityTable'
+import {QueueStatus} from './QueueStatus'
+import {formattedAmount,sourceScale} from './amount'
+import {useWorkspaceBridge} from './bridge'
 import {AgentHub} from './AgentHub'
 import '@astryxdesign/core/reset.css'
 import '@astryxdesign/core/astryx.css'
@@ -32,14 +36,15 @@ import './desk.css'
 const LibraryPreview = lazy(() => import('./LibraryPreview').then(module => ({default: module.LibraryPreview})))
 const Reader = lazy(() => import('./Reader').then(module => ({default: module.Reader})))
 
-type View = 'Documents' | 'Review queue' | 'Figure register' | 'Agent MCP & Skill'
+type View = 'Documents' | 'Review queue' | 'Figure register' | 'Agent MCP & Bridge'
 const views = [{label:'Documents',short:'Documents',icon:LibraryBig}, {label:'Review queue',short:'Queue',icon:ClipboardList},
-  {label:'Figure register',short:'Register',icon:Table2}, {label:'Agent MCP & Skill',short:'Agent tools',icon:Terminal}] as const
+  {label:'Figure register',short:'Register',icon:Table2}, {label:'Agent MCP & Bridge',short:'Agent tools',icon:Terminal}] as const
 const sampleName = 'Northfield FY2025 (Sample).pdf'
 
 function App() {
   const [items, setItems] = useState<Header[]>([])
   const [active, setActive] = useState<{doc: RecordFile; figure?: string}>()
+  const [bridgeWorkpaper,setBridgeWorkpaper] = useState<string>()
   const [view, setView] = useState<View>('Documents')
   const [settings,setSettings] = useState(preferences)
   const [railDrag,setRailDrag] = useState(false)
@@ -50,6 +55,20 @@ function App() {
   const [deleting, setDeleting] = useState(false)
   const picker = useRef<HTMLInputElement>(null)
   const locked = useRef(false)
+
+  function workpaperChanged(doc:RecordFile) {
+    setActive(current=>current?.doc.id===doc.id ? {...current,doc} : current)
+    setItems(current=>current.map(item=>item.id===doc.id ? summarize(doc) : item))
+  }
+  const connected = useWorkspaceBridge(active?.doc.id ?? (view==='Agent MCP & Bridge' ? bridgeWorkpaper : undefined),settings,workpaperChanged)
+
+  useEffect(()=>{
+    function syncSettings(event:StorageEvent) {
+      if (event.key===preferencesKey) setSettings(preferences())
+    }
+    window.addEventListener('storage',syncSettings)
+    return ()=>window.removeEventListener('storage',syncSettings)
+  },[])
 
   async function refresh() {
     setItems((await list()).sort((a,b) => b.added.localeCompare(a.added)))
@@ -99,7 +118,7 @@ function App() {
           const progress = (step: string) => setMessage(prefix + step + ' · ' + file.name)
           const doc = extension === 'folio'
             ? await (await import('./backup')).restore(file, progress)
-            : await indexPdf(file, progress, sample)
+            : await indexPdf(file, progress, {sample,docling:settings.docling && !sample})
           if (files.length === 1) setActive({doc})
         } catch (error) {
           problems.push(file.name + ' — ' + (error instanceof Error ? error.message : 'Import failed.'))
@@ -156,10 +175,17 @@ function App() {
     }
   }
 
-  const pending = items.reduce((total, item) => total + (item.review?.pending ?? 0) + (item.review?.unresolved ?? 0), 0)
+  const pending = active ? items.find(item=>item.id===active.doc.id)?.review?.pending ?? 0
+    : items.reduce((total,item)=>total+(item.review?.pending ?? 0),0)
+  function updateSettings(value:typeof settings) {
+    storePreferences(value)
+    setSettings(value)
+  }
   const canImport = !message && !loading
   const chooseFiles = () => picker.current?.click()
   function navigate(next: View) {
+    if (next==='Agent MCP & Bridge' && active) setBridgeWorkpaper(active.doc.id)
+    else if (next!=='Agent MCP & Bridge') setBridgeWorkpaper(undefined)
     if (active) void refresh().catch(() => setError('Library refresh failed.'))
     setActive(undefined)
     setView(next)
@@ -171,26 +197,24 @@ function App() {
     <aside className="workspace-rail" aria-label="Workspace sidebar">
       <button type="button" className="rail-brand" onClick={()=>navigate('Documents')}>
         <img className="brand-icon" src="/folio.svg" alt=""/>
-        <span><strong>FOLIO</strong><small>Review workspace</small></span>
+        <span><strong>FOLIO</strong><small>2.0</small></span>
       </button>
       <nav className="rail-nav" aria-label="Workspace navigation">
         {views.map(({label,short,icon:Icon})=><button type="button" aria-label={label} key={label} onClick={()=>navigate(label)}
           aria-current={(active ? label==='Review queue' : label===view) ? 'page' : undefined}>
-          <Icon size={16}/><span className="rail-label">{label}</span><span className="rail-label-short" aria-hidden="true">{short}</span>{label==='Review queue' && pending>0 && <small>{pending}</small>}
+          <Icon size={16}/><span className="rail-label">{label}</span><span className="rail-label-short" aria-hidden="true">{short}</span>{label==='Review queue' && (active || pending>0) && <small>{pending}</small>}
         </button>)}
       </nav>
       <div className="rail-library">
         <div className="rail-library-heading"><h2>Library</h2><Button size="sm" variant="ghost" label="Import PDF or Folio backup" icon={<Plus size={16}/>} isIconOnly onClick={chooseFiles} isDisabled={!canImport}/></div>
         <div className="rail-files">
-          {items.map(item=><button type="button" key={item.id} title={item.name} aria-pressed={active?.doc.id===item.id}
+          {items.map(item=><button type="button" key={item.id} title={item.name} aria-label={item.name} aria-pressed={active?.doc.id===item.id}
             onClick={()=>{if(active?.doc.id!==item.id)void openDocument(item.id)}}>
             <span className="rail-file-icon"><FileText size={15}/></span>
-            <span><strong>{item.name}</strong><small>
-              {!!item.review?.unresolved && <span className="status-pill review">{item.review.unresolved} unresolved</span>}
-              {!!item.review?.pending && <span className="status-pill neutral">{item.review.pending} to review</span>}
+            <span><strong>{item.name}</strong><div className="rail-file-status">
+              {item.review?.counts && <QueueStatus counts={item.review.counts}/>}
               {!!item.review?.scans && <span className="status-pill review">OCR</span>}
-              {!item.review?.pending && !item.review?.unresolved && <span className="status-pill verified">{item.count ? item.count+' verified' : 'Indexed'}</span>}
-            </small></span>
+            </div></span>
           </button>)}
           {!items.length && <button type="button" className="rail-sample" onClick={openSample} disabled={!canImport}><BookOpen size={16}/><span><strong>Open sample workpaper</strong></span></button>}
         </div>
@@ -207,9 +231,9 @@ function App() {
       {message && <div className="notice" role="status"><ProgressBar label="Import in progress" isLabelHidden isIndeterminate/><span>{message}</span></div>}
       {active ? <Suspense fallback={<div className="notice" role="status">Opening workpaper…</div>}>
         <Reader key={active.doc.id+':'+(active.figure ?? '')} initial={active.doc} initialFigure={active.figure} back={() => navigate(view==='Review queue' ? view : 'Documents')}
-          settings={settings} onChange={()=>void refresh().catch(()=>setError('Library refresh failed.'))}/>
+          settings={settings} onSettings={updateSettings} onChange={workpaperChanged}/>
       </Suspense> :
-        view === 'Agent MCP & Skill' ? <AgentHub settings={settings} onSettings={setSettings}/> :
+        view === 'Agent MCP & Bridge' ? <AgentHub connected={connected} settings={settings} onSettings={updateSettings}/> :
         view === 'Figure register' ? <Register items={items} loading={loading} onOpen={openDocument} onBrowse={() => navigate('Documents')}/> :
         <Library key={view} view={view} items={items} loading={loading}
           canImport={canImport} onImport={chooseFiles} onDrop={ingest} onSample={openSample} onOpen={openDocument}
@@ -301,33 +325,28 @@ type Entry = {id: string; document: string; figure: Figure}
 function Register({items, loading, onOpen, onBrowse}: {
   items: Header[]; loading: boolean; onOpen: (id: string, figure: string) => void; onBrowse: () => void
 }) {
-  const [entries, setEntries] = useState<Entry[]>([])
-  const [query, setQuery] = useState('')
-  const [source, setSource] = useState('')
-  const [reading, setReading] = useState(true)
-  const [error, setError] = useState('')
+  const [visible,setVisible] = useState<Entry[]>([])
+  const [query,setQuery] = useState('')
+  const [source,setSource] = useState('')
+  const [reading,setReading] = useState(true)
+  const [error,setError] = useState('')
+  const [ledgers,setLedgers] = useState<Awaited<ReturnType<typeof readActivity>>>([])
+  const [activityQuery,setActivityQuery] = useState('')
+  const integrity = useAuditIntegrity(ledgers)
+  const sources = items.filter(item=>item.count && !item.sample)
   useEffect(() => {
     let active = true
-    async function readRegister() {
-      setReading(true)
-      setError('')
-      const next: Entry[] = []
-      for (const item of items) {
-        if (!active) return
-        if (!item.count) continue
-        const doc = await get(item.id)
-        if (!doc || doc.sample) continue
-        for (const figure of doc.figures) next.push({id: doc.id, document:doc.name, figure})
-      }
-      if (active) setEntries(next.sort((a,b) => b.figure.saved.localeCompare(a.figure.saved)))
-    }
-    void readRegister().catch(() => {if (active) setError('Could not load the register. Reopen it to try again.')})
-      .finally(() => {if (active) setReading(false)})
-    return () => {active = false}
-  }, [items])
-  const needle = query.trim().toLowerCase()
-  const visible = entries.filter(({id, document, figure}) => (!source || id === source) &&
-    [document, figure.label, figure.amount, figure.unit, figure.period].some(value => value.toLowerCase().includes(needle)))
+    void readRegister(query,source).then(entries=>{if(active)setVisible(entries)})
+      .catch(()=>{if(active)setError('Could not load the register. Reopen it to try again.')})
+      .finally(()=>{if(active)setReading(false)})
+    return ()=>{active=false}
+  },[items,query,source])
+  useEffect(()=>{
+    let active = true
+    void readActivity().then(entries=>{if(active)setLedgers(entries)})
+      .catch(()=>{if(active)setError('Could not load Activity history.')})
+    return ()=>{active=false}
+  },[items])
   const busy = loading || reading
   return <div className="library">
     <div className="page-heading"><div><Heading level={1} weight="bold">Figure register</Heading><p>Search verified figures across your documents and jump back to the source.</p></div>
@@ -339,27 +358,33 @@ function Register({items, loading, onOpen, onBrowse}: {
         <div className="list-controls">
           <TextInput label="Filter figures" placeholder="Search figures…" startIcon={<Search size={15}/>} isLabelHidden hasClear value={query} onChange={setQuery}/>
           <select aria-label="Source document" value={source} onChange={event => setSource(event.target.value)}>
-            <option value="">All documents</option>{[...new Map(entries.map(entry => [entry.id, entry.document]))].map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+            <option value="">All documents</option>{sources.map(({id,name}) => <option key={id} value={id}>{name}</option>)}
           </select>
         </div>
       </div>
       {error && <div className="notice error" role="alert">{error}</div>}
       <Table className="data-table register-table" density="compact" hasHover aria-labelledby="register-heading">
-        <TableHeader><TableRow><TableHeaderCell scope="col">Metric</TableHeaderCell><TableHeaderCell scope="col" className="number">Value</TableHeaderCell><TableHeaderCell scope="col">Unit</TableHeaderCell><TableHeaderCell scope="col">Period</TableHeaderCell><TableHeaderCell scope="col">Source</TableHeaderCell></TableRow></TableHeader>
+        <TableHeader><TableRow><TableHeaderCell scope="col">Verbatim label</TableHeaderCell><TableHeaderCell scope="col">Canonical metric</TableHeaderCell><TableHeaderCell scope="col" className="number">Value</TableHeaderCell><TableHeaderCell scope="col">Unit</TableHeaderCell><TableHeaderCell scope="col">Normalized</TableHeaderCell><TableHeaderCell scope="col">Period</TableHeaderCell><TableHeaderCell scope="col">Source</TableHeaderCell></TableRow></TableHeader>
         <TableBody>{!busy && !error && visible.map(({id, document, figure}) => <TableRow key={id + figure.id}>
-          <TableCell><button className="text-link" onClick={() => onOpen(id, figure.id)}>{figure.label}<ArrowUpRight size={14}/></button></TableCell>
-          <TableCell className="number">{figure.amount}</TableCell><TableCell>{figure.unit || '—'}</TableCell><TableCell>{figure.period || '—'}</TableCell>
+          <TableCell><button className="text-link" onClick={() => onOpen(id, figure.id)}>{figure.verbatimLabel ?? figure.original?.source_label ?? figure.original?.label ?? figure.label}<ArrowUpRight size={14}/></button></TableCell>
+          <TableCell>{figure.label}</TableCell><TableCell className="number">{sourceScale(figure).amount}</TableCell><TableCell>{sourceScale(figure).unit || '—'}</TableCell><TableCell>{formattedAmount(figure.amount,figure.unit)}</TableCell><TableCell>{figure.period || '—'}</TableCell>
           <TableCell><span className="source-name">{document}</span><small>Page {figure.source.page}</small></TableCell>
         </TableRow>)}</TableBody>
       </Table>
       {!visible.length && !error && <div className="empty">
-        <EmptyState title={busy ? 'Loading figures…' : entries.length ? 'No matching figures' : 'No verified figures yet'}
+        <EmptyState title={busy ? 'Loading figures…' : sources.length ? 'No matching figures' : 'No verified figures yet'}
           icon={<BookOpen size={30}/>}
-          description={busy ? undefined : entries.length ? 'Adjust your search or source filter.' : 'Verify a finding in an imported document to add it to your register.'}
-          actions={!busy && !entries.length ? <Button label="Browse documents" onClick={onBrowse}/> : undefined}/>
+          description={busy ? undefined : sources.length ? 'Adjust your search or source filter.' : 'Verify a finding in an imported document to add it to your register.'}
+          actions={!busy && !sources.length ? <Button label="Browse documents" onClick={onBrowse}/> : undefined}/>
       </div>}
       {!!visible.length && <p className="table-caption">CSV exports the {visible.length} {visible.length === 1 ? 'figure' : 'figures'} shown, including source quotes and notes.</p>}
     </Card>
+    <section className="workpaper-register" aria-label="Activity history">
+      <div className="register-bar"><h2>Activity history</h2><IntegrityBadge integrity={integrity}/><div className="grow"/>
+        <input aria-label="Filter activity history" placeholder="Filter history…" value={activityQuery} onChange={event=>setActivityQuery(event.target.value)}/>
+      </div>
+      <div className="register-scroll"><ActivityTable ledgers={ledgers} query={activityQuery} includeDocument/></div>
+    </section>
   </div>
 }
 

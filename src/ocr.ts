@@ -31,14 +31,17 @@ export async function recognizePage(
     if (endpoint) {
       const blob = await new Promise<Blob>((resolve,reject) => canvas.toBlob(value => value ? resolve(value) : reject(Error('Could not render the OCR image.')), 'image/png'))
       const response = await fetch(endpoint,{method:'POST',body:blob,credentials:'omit',redirect:'error',signal:AbortSignal.timeout(45000)})
-      if (!response.ok) throw Error('Hosted OCR returned HTTP ' + response.status + '.')
+      if (!response.ok) {
+        const detail = endpoint.startsWith('/') ? (await response.json().catch(()=>null))?.error : undefined
+        throw Error(detail ?? 'Hosted OCR returned HTTP ' + response.status + '.')
+      }
       const {lines} = await response.json() as {lines?: Line[]}
       if (!Array.isArray(lines) || lines.length > 3000 || !lines.every(line => typeof line?.text === 'string' &&
         Array.isArray(line.box) && line.box.length === 4 && line.box.every(n => Number.isFinite(n) && n >= 0 && n <= 1) &&
         line.box[0] < line.box[2] && line.box[1] < line.box[3] && (line.confidence === undefined ||
           (Number.isFinite(line.confidence) && line.confidence >= 0 && line.confidence <= 100)))) throw Error('Hosted OCR returned invalid line data.')
       return lines.filter(line => line.text.trim()).map(line => ({
-        page:page.pageNumber,text:line.text.trim(),box:boxOnPage(line.box),ocr:true,confidence:line.confidence,
+        page:page.pageNumber,text:line.text.trim(),box:boxOnPage(line.box),ocr:true,confidence:line.confidence,block_type:line.block_type,wordConfidence:line.wordConfidence,
       }))
     }
     if (!worker) worker = ownWorker = await startOCR()

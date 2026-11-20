@@ -1,3 +1,4 @@
+import {normalizedAmount,sourceScale} from './amount'
 import {strToU8,zipSync} from 'fflate'
 import {findings} from './findings'
 import {findingKey, findingStatus, workpaperFindings} from './review'
@@ -27,10 +28,15 @@ function sheet(rows:(string|number)[][],widths:number[]){
   return '<worksheet xmlns="'+main+'"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>'+cols.join('')+'</cols><sheetData>'+content.join('')+'</sheetData></worksheet>'
 }
 export function writeWorkbook(doc:RecordFile,selected=doc.figures){
-  const figures:(string|number)[][]=[['Metric','Value','Unit','Period','Source PDF','Page','Evidence','Reviewer note','Reviewed UTC','Original value','Original unit','Original period','Reviewer ID','Change reason']]
-  const amount=(f:Figure)=>f.amount.replace(/[^0-9]/g,'').length<=15&&Number.isFinite(Number(f.amount))?Number(f.amount):f.amount
-  for(const f of selected)figures.push([f.label,amount(f),f.unit,f.period,doc.name,f.source.page,f.source.text,f.note,f.saved,
-    f.original?.amount??'',f.original?.unit??'',f.original?.period??'',f.reviewer??'',f.changeReason??''])
+  const figures:(string|number)[][]=[['Metric','Value','Unit','Period','Source PDF','Page','Evidence','Reviewer note','Reviewed UTC','Original value','Original unit','Original period','Reviewer ID','Change reason','Verbatim label','Normalized value','Normalized unit']]
+  const numeric=(value:string)=>value && value.replace(/[^0-9]/g,'').length<=15&&Number.isFinite(Number(value))?Number(value):value
+  for(const figure of selected) {
+    const f = sourceScale(figure)
+    const normalized = normalizedAmount(f.amount,f.unit)
+    figures.push([f.label,numeric(f.amount),f.unit,f.period,doc.name,f.source.page,f.source.text,f.note,f.saved,
+      numeric(f.original?.amount??''),f.original?.unit??'',f.original?.period??'',f.reviewer??'',f.changeReason??'',
+      f.verbatimLabel??f.original?.source_label??f.original?.label??'',numeric(normalized?.value??''),normalized?.unit??''])
+  }
   const evidence:(string|number)[][]=[['Metric','Extracted value','Unit','Period','Page','Evidence','Status','Reason code','Details','Decided UTC','Reviewer ID','Assignee','Priority']]
   for (const f of workpaperFindings(findings(doc.lines),doc.figures,doc.exclusions,doc.assignments)) {
     const key = findingKey(f)
@@ -40,10 +46,11 @@ export function writeWorkbook(doc:RecordFile,selected=doc.figures){
     evidence.push([f.label,f.amount,f.unit,f.period,f.source.page,f.source.text,status,decision?.code ?? '',decision?.reason ?? '',
       decision?.reason ? decision.saved : '',decision?.reason ? decision.reviewer ?? '' : '',assignment?.assignee ?? '',assignment?.priority ?? 'Normal'])
   }
-  const audit = [['Action','Reviewer ID','Reason','UTC','Original prediction','Before','After']]
+  const audit = [['Action','Reviewer ID','Reason','UTC','Original prediction','Before','After','Previous SHA-256','Event SHA-256','Source PDF SHA-256','Assignment']]
   for (const event of [...(doc.history ?? [])].sort((a,b)=>b.saved.localeCompare(a.saved))) audit.push([
     event.action,event.reviewer,event.reason,event.saved,JSON.stringify(event.original) ?? '',
     JSON.stringify(event.ocr?.before ?? event.before) ?? '',JSON.stringify(event.ocr?.after ?? event.after) ?? '',
+    event.prev_hash ?? '',event.hash ?? '',event.source_pdf_sha256 ?? '',JSON.stringify(event.routing) ?? '',
   ])
   const sheetNames = ['Reviewed figures','Document findings','Activity history']
   const sheetIds = sheetNames.map((_,index)=>index+1)
