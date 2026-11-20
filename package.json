@@ -1,13 +1,13 @@
 {
   "name": "folio-evidence-review",
   "private": true,
-  "version": "2.0.0",
+  "version": "3.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build && node scripts/copy-pdf-fonts.mjs && node scripts/build-server.mjs",
     "start": "node --experimental-strip-types server/local.js",
-    "test": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/review.mjs && node --disable-warning=ExperimentalWarning --experimental-strip-types tests/statements.mjs && node --disable-warning=ExperimentalWarning --experimental-strip-types tests/service.mjs && npm run test:browser",
+    "test": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/review.mjs && node --disable-warning=ExperimentalWarning --experimental-strip-types tests/statements.mjs && node --disable-warning=ExperimentalWarning --experimental-strip-types tests/folio3.mjs && node --disable-warning=ExperimentalWarning --experimental-strip-types tests/service.mjs && npm run test:browser",
     "test:browser": "playwright test"
   },
   "dependencies": {
@@ -15,6 +15,7 @@
     "@astryxdesign/theme-neutral": "0.7.16",
     "@fontsource/ibm-plex-mono": "5.3.0",
     "@fontsource/ibm-plex-sans": "5.3.0",
+    "@huggingface/transformers": "^4.2.0",
     "@sqlite.org/sqlite-wasm": "^3.54.1-build1",
     "@stylexjs/stylex": "0.19.2",
     "@tesseract.js-data/eng": "^1.0.0",

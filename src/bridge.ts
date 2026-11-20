@@ -1,6 +1,9 @@
 import {useEffect,useRef,useState} from 'react'
 import {analyzeLines} from './findings'
-import {createDraft} from './agentDraft'
+import {ambiguousContext,createDraft} from './agentDraft'
+import {cropEvidence} from './evidence'
+import {tieOuts} from './tieout'
+import type {Figure} from './register'
 import {change,get,readRegister,type RecordFile} from './register'
 import {findingKey,findingStatus,workpaperFindings} from './review'
 import {reconciliation,variance} from './reconciliation'
@@ -47,10 +50,61 @@ export function useWorkspaceBridge(activeId:string|undefined, settings:Preferenc
           return computed?.failed ? [{...rule,...computed}] : []
         })}
       }
+      if (operation==='run_workpaper_tieout') {
+        const arithmetic = reconciliation(analysis).map(rule=>{
+          const computed = variance(rule,doc.figures)
+          return {name:rule.name,period:rule.total.period,unit:rule.total.unit,status:computed ? computed.failed ? 'variance' : 'reconciles' : 'needs_review',
+            difference:computed?.difference ?? null,equation:computed?.equation ?? null,total_finding_id:findingKey(rule.total),page:rule.total.source.page}
+        })
+        const ties = tieOuts(findings,doc.figures,doc.exclusions).map(tie=>({metric:tie.metric,period:tie.period,unit:tie.unit,
+          status:tie.failed ? 'variance' : 'ties',difference:tie.difference,
+          sources:[tie.a,tie.b].map(side=>({finding_id:findingKey(side.finding),page:side.page,amount:side.amount,unit:side.unit,quote:side.finding.source.text}))}))
+        const onlyVariances = args.only_variances===true
+        return {workpaper_id:doc.id,document:doc.name,pages:doc.pages,
+          arithmetic:onlyVariances ? arithmetic.filter(item=>item.status==='variance') : arithmetic,
+          tie_outs:onlyVariances ? ties.filter(item=>item.status==='variance') : ties,
+          variances:arithmetic.filter(item=>item.status==='variance').length+ties.filter(item=>item.status==='variance').length}
+      }
+      if (operation==='review_finding_draft') {
+        const reviewer = settings.reviewer.trim()
+        if (!reviewer) throw Error('Set a reviewer name in Folio before approving from the card.')
+        const proposal = Object.values(doc.drafts ?? {}).find(item=>item.id===args.draft_id)
+        if (!proposal || !['approve','reject'].includes(String(args.decision))) throw Error('This draft is no longer awaiting review.')
+        const finding = findings.find(item=>findingKey(item)===proposal.findingId)
+        if (!finding) throw Error('Finding is unavailable.')
+        const approve = args.decision==='approve'
+        if (approve && (proposal.run!==finding.source.extraction_run_id || proposal.run!==doc.extractionRuns?.[finding.source.page] ||
+          proposal.baseDecision!==doc.exclusions?.[proposal.findingId]?.saved)) throw Error('The source changed. Reject this draft and request a new proposal.')
+        const updated = await change(doc.id,prior=>{
+          if (!prior || prior.drafts?.[proposal.findingId]?.id!==proposal.id) throw Error('This draft is no longer awaiting review.')
+          const saved = new Date().toISOString()
+          const drafts = {...prior.drafts}
+          delete drafts[proposal.findingId]
+          const reason = `${approve ? 'Approved' : 'Rejected'} in the MCP Apps verification card (${agent})`
+          if (!approve) return {...prior,drafts,history:[...(prior.history ?? []),{id:crypto.randomUUID(),action:'Reject draft',reviewer,saved,reason,original:finding,draft:proposal}]}
+          const after:Figure = {id:crypto.randomUUID(),label:proposal.changes.canonicalMetric?.trim() ?? finding.canonical_metric ?? finding.label,
+            verbatimLabel:finding.source_label ?? finding.label,amount:proposal.changes.amount ?? finding.amount,unit:proposal.changes.unit ?? finding.unit,
+            period:proposal.changes.period ?? finding.period,note:proposal.changes.note ?? '',source:finding.source,saved,original:finding,
+            findingKey:proposal.findingId,changeReason:proposal.rationale,reviewer}
+          const exclusions = {...prior.exclusions}
+          delete exclusions[proposal.findingId]
+          return {...prior,drafts,exclusions,figures:[...prior.figures,after],history:[...(prior.history ?? []),
+            {id:crypto.randomUUID(),action:'Verify figure',reviewer,saved,reason,original:finding,after,draft:proposal}]}
+        })
+        if (updated) onChange(updated)
+        return {draft_id:proposal.id,status:approve ? 'Verified' : 'Rejected'}
+      }
       if (operation==='propose_finding_edit') {
         if (args.workpaper_id!==doc.id || current.current.activeId!==doc.id) throw Error('The requested workpaper is no longer active.')
         const finding = findings.find(item=>findingKey(item)===args.finding_id)
         if (!finding) throw Error('Finding is unavailable.')
+        const missing = ambiguousContext(finding).filter(field=>{
+          const value = (args.context as Record<string,unknown> | undefined)?.[field]
+          return typeof value!=='string' || !value.trim()
+        })
+        if (missing.length) return {input_required:{fields:missing,
+          message:`Confirm the ${missing.join(' and ')} for “${finding.source_label ?? finding.label}” (${finding.amount}) on page ${finding.source.page} before Folio stages this draft.`,
+          suggestions:{unit:finding.unit || undefined,period:finding.period || undefined}}}
         const draft = createDraft(doc,finding,args,agent)
         const updated = await change(doc.id,prior=>{
           if (!prior || prior.revision!==doc.revision || current.current.activeId!==doc.id ||
@@ -61,7 +115,11 @@ export function useWorkspaceBridge(activeId:string|undefined, settings:Preferenc
               saved:draft.created,reason:draft.rationale,original:finding,draft}]}
         })
         if (updated) onChange(updated)
-        return {draft_id:draft.id,status:'Draft'}
+        const evidence = await cropEvidence(doc,finding.source.page,finding.source.box).catch(()=>undefined)
+        return {draft_id:draft.id,status:'Draft',changes:draft.changes,rationale:draft.rationale,
+          before:{amount:finding.amount,canonicalMetric:finding.canonical_metric ?? finding.label,unit:finding.unit,period:finding.period},
+          finding:{finding_id:draft.findingId,label:finding.source_label ?? finding.label,source:finding.source.text,page:finding.source.page},
+          evidence:{page:finding.source.page,box:finding.source.box,...(evidence ? {image:evidence} : {})}}
       }
       throw Error('Unknown workspace operation.')
     }

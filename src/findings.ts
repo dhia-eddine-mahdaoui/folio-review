@@ -1,5 +1,6 @@
 import {extractStatement,isStatementHeading,validateStatements} from './statements.ts'
 import type { Line } from './register'
+import {canonical,narrativeConcept} from './taxonomy.ts'
 
 export type Finding = {label:string; source_label?:string; canonical_metric?:string; manualFigureId?:string; amount:string; unit:string; period:string; source:Line; review_flags?:string[]; normalized_amount?:string|null}
 const fields: [string, RegExp][] = [
@@ -45,7 +46,7 @@ function narrative(lines:Line[]):Finding[]{
       const amount=value[2].replaceAll(',','')
       const identity=[label,amount,unit,source.page].join('|')
       if(!seen.has(identity)){
-        output.push({label,source_label:prefix[0],canonical_metric:label==='Operating profit' && /^Operating income$/i.test(prefix[0]) ? 'Operating Profit (US-GAAP)' : label,amount,unit,period:year?'FY'+year:'',source})
+        output.push({label,source_label:prefix[0],canonical_metric:canonical(narrativeConcept(label),unit,label).label,amount,unit,period:year?'FY'+year:'',source})
         seen.add(identity)
       }
       break

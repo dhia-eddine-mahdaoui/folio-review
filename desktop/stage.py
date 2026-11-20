@@ -35,9 +35,11 @@ def npm_tar(archive, target, member=None):
 
 for path in ['dist/client', 'server', 'desktop/skills']:
     shutil.copytree(root / path, dest / path)
-for path in ['package.json','folio/docling_layout.py','src/findings.ts','src/statements.ts','src/bridgeCatalog.ts','desktop/cli.mjs','desktop/agents.mjs','desktop/launch.mjs']:
+for path in ['package.json','src/findings.ts','src/statements.ts','src/taxonomy.ts','src/bridgeCatalog.ts','desktop/cli.mjs','desktop/agents.mjs','desktop/launch.mjs']:
     copy_file(root / path, dest / path)
 copy_file(args.node_license, dest / 'licenses/node.txt')
+# Inside server/ so the Linux CLI wrapper can occupy the top-level `folio` path.
+copy_file(root / 'folio/docling_layout.py', dest / 'server/docling_layout.py')
 
 seen = set()
 def package(name):

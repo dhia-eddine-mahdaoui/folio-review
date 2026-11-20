@@ -1,6 +1,7 @@
 import {useMemo,useState} from 'react'
 import {Button} from '@astryxdesign/core/Button'
-import {ArrowDownToLine, Archive, ArrowUpRight, FileSpreadsheet, History, List} from 'lucide-react'
+import {ArrowDownToLine, Archive, ArrowUpRight, FileSpreadsheet, History, KeyRound, List} from 'lucide-react'
+import {signedBy} from './SealDialog'
 import {type Figure, type RecordFile} from './register'
 import {formattedAmount,sourceScale} from './amount'
 import {ActivityTable,IntegrityBadge,useAuditIntegrity} from './ActivityTable'
@@ -11,9 +12,10 @@ const columns: {key:Sort; label:string}[] = [
   {key:'period', label:'Period'}, {key:'saved', label:'Reviewed UTC'},
 ]
 
-export function WorkpaperRegister({doc, onOpen, onCsv, onExport}: {
-  doc:RecordFile; onOpen:(figure:Figure)=>void; onCsv:(figures:Figure[])=>void; onExport:(format:'Excel'|'Folio',figures?:Figure[])=>void
+export function WorkpaperRegister({doc, onOpen, onCsv, onExport, onSeal}: {
+  doc:RecordFile; onOpen:(figure:Figure)=>void; onCsv:(figures:Figure[])=>void; onExport:(format:'Excel'|'Folio',figures?:Figure[])=>void; onSeal:()=>void
 }) {
+  const signed = signedBy(doc)
   const [activity,setActivity] = useState(false)
   const ledgers = useMemo(()=>activity ? [{id:doc.id,history:doc.history ?? []}] : [],[activity,doc.id,doc.history])
   const integrity = useAuditIntegrity(ledgers)
@@ -30,11 +32,13 @@ export function WorkpaperRegister({doc, onOpen, onCsv, onExport}: {
       <Button size="sm" variant="ghost" label={activity ? 'Figure register' : 'Activity history'}
         icon={activity ? <List size={14}/> : <History size={14}/>} onClick={() => setActivity(!activity)}/>
       {activity && <IntegrityBadge integrity={integrity}/>}
+      {signed && <span className="status-pill signed" title={signed.reason}>Passkey Signed · P-256</span>}
       <div className="grow"/>
       {!activity && <input aria-label="Filter workpaper figures" placeholder="Filter figures…" value={query} onChange={event=>setQuery(event.target.value)}/>}
       <Button size="sm" label="CSV" icon={<ArrowDownToLine size={14}/>} isDisabled={!visible.length} onClick={() => onCsv(visible)}/>
-      <Button size="sm" label="Excel" icon={<FileSpreadsheet size={14}/>} onClick={() => onExport('Excel',visible)}/>
+      <Button size="sm" label="Formula Excel (.xlsx)" icon={<FileSpreadsheet size={14}/>} onClick={() => onExport('Excel',visible)}/>
       <Button size="sm" label="Backup" icon={<Archive size={14}/>} onClick={() => onExport('Folio')}/>
+      <Button size="sm" variant="primary" label="Sign & Seal .folio" icon={<KeyRound size={14}/>} onClick={onSeal}/>
     </div>
     <div className="register-scroll">
       {activity ? <ActivityTable ledgers={ledgers}/> :

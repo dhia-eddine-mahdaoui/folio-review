@@ -2,8 +2,16 @@ import type {Finding} from './findings'
 import type {RecordFile} from './register'
 import {findingKey,findingStatus} from './review'
 
-export type DraftChanges = {amount?:string; canonicalMetric?:string; note?:string}
+export type DraftChanges = {amount?:string; canonicalMetric?:string; note?:string; unit?:string; period?:string}
 export type AgentDraft = {id:string; workpaperId:string; findingId:string; run?:string; baseDecision?:string; created:string; changes:DraftChanges; rationale:string; agent:string}
+
+// Findings whose scale or period cannot be read from the source need the user's confirmation before an agent drafts on them.
+export function ambiguousContext(finding:Finding) {
+  const flags = finding.review_flags ?? []
+  const fields = [...(!finding.unit || flags.some(flag=>['missing_unit','missing_scale','missing_currency'].includes(flag)) ? ['unit'] : []),
+    ...(!finding.period || flags.includes('missing_period') ? ['period'] : [])]
+  return fields
+}
 
 export function createDraft(doc:RecordFile,finding:Finding, input:Record<string,unknown>, agent:string):AgentDraft {
   const findingId = findingKey(finding)
@@ -18,6 +26,13 @@ export function createDraft(doc:RecordFile,finding:Finding, input:Record<string,
       key==='note' && value.length>4000) throw Error('Invalid draft change.')
   }
   if (typeof input.rationale!=='string' || !input.rationale.trim() || input.rationale.length>2000) throw Error('Provide a rationale of up to 2,000 characters.')
+  const context = input.context as Record<string,unknown> | undefined
+  const confirmed:DraftChanges = {}
+  for (const field of ambiguousContext(finding) as ('unit'|'period')[]) {
+    const value = context?.[field]
+    if (typeof value!=='string' || !value.trim() || value.length>120) throw Error('Confirm the '+field+' before staging a draft.')
+    confirmed[field] = value.trim()
+  }
   return {id:crypto.randomUUID(),workpaperId:doc.id,findingId,run:finding.source.extraction_run_id,
-    baseDecision:doc.exclusions?.[findingId]?.saved,created:new Date().toISOString(),changes,rationale:input.rationale.trim(),agent}
+    baseDecision:doc.exclusions?.[findingId]?.saved,created:new Date().toISOString(),changes:{...changes as DraftChanges,...confirmed},rationale:input.rationale.trim(),agent}
 }

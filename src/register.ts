@@ -276,7 +276,7 @@ export async function scanPage(record:RecordFile,pageNumber:number,reviewer:stri
     const invalidated = new Set(before.map(findingKey))
     const drafts = Object.fromEntries(Object.entries(prior.drafts ?? {}).filter(([id])=>!invalidated.has(id)))
     const event:AuditEvent={
-      id:crypto.randomUUID(),action:'OCR re-indexed',reviewer:reviewer || 'OCR',reason:endpoint ? 'Hosted OCR' : 'Local OCR',saved,
+      id:crypto.randomUUID(),action:'OCR re-indexed',reviewer:reviewer || 'OCR',reason:endpoint==='vlm:local' ? 'In-browser VLM' : endpoint ? 'Hosted OCR' : 'Local OCR',saved,
       ocr:{page:pageNumber,before,after:findings(lines).filter(finding=>finding.source.page===pageNumber),
         invalidatedDrafts:Object.values(prior.drafts ?? {}).filter(draft=>invalidated.has(draft.findingId)).map(draft=>draft.id)},
     }

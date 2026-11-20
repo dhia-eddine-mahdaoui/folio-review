@@ -6,10 +6,13 @@ import type {PDFDocumentProxy} from 'pdfjs-dist'
 import {getDocument} from './pdf'
 import { type Evidence } from './model'
 
-export type Annotation = {id:string; box:Evidence['box']; label:string; tone:'verified'|'review'|'confident'; activate:() => void}
+export type Annotation = {id:string; box:Evidence['box']; label:string; tone:'verified'|'review'|'confident'|'variance'; activate:() => void}
 
-export function Document({ url, filename, page, pages, onPage, source, onRegion, preview, annotations, selected, linked, onLink, run, formulaBoxes }: {
-  url: string
+export function Document({ file, documentKey, filename, page, pages, onPage, source, onRegion, preview, annotations, selected, linked, onLink, run, formulaBoxes, title, tools = true }: {
+  file: Blob
+  documentKey: string
+  title?: string
+  tools?: boolean
   filename: string
   page: number
   pages: number
@@ -42,11 +45,18 @@ export function Document({ url, filename, page, pages, onPage, source, onRegion,
   const [document, setDocument] = useState<PDFDocumentProxy>()
   const [rendered, setRendered] = useState<{ document: PDFDocumentProxy; page: number }>()
   const ready = rendered?.document === document && rendered?.page === page
+  const [paintedDocument, setPaintedDocument] = useState<PDFDocumentProxy>()
   const [error, setError] = useState('')
+  const latestFile = useRef(file)
+  latestFile.current = file
   useEffect(() => {
     const scroller = holder.current?.parentElement
     if (!scroller) return
-    const observer = new ResizeObserver(([entry]) => setSize({width:entry.contentRect.width, height:entry.contentRect.height}))
+    // Hidden panes report zero width; rendering waits until the pane has a measurable size.
+    const observer = new ResizeObserver(([entry]) => {
+      const {width, height} = entry.contentRect
+      setSize(current => current.width === Math.round(width) && current.height === Math.round(height) ? current : {width:Math.round(width), height:Math.round(height)})
+    })
     observer.observe(scroller)
     return () => observer.disconnect()
   }, [])
@@ -54,13 +64,19 @@ export function Document({ url, filename, page, pages, onPage, source, onRegion,
     setError('')
     setDocument(undefined)
     let active = true
-    const task = getDocument({ url, standardFontDataUrl: '/pdf-fonts/' })
-    task.promise.then(pdf => { if (active) setDocument(pdf) })
-      .catch(() => { if (active) setError('Unable to open this PDF preview.') })
-    return () => { active = false; void task.destroy().catch(() => {}) }
-  }, [url])
+    let task: ReturnType<typeof getDocument> | undefined
+    // Restored and agent-updated records carry new File objects for the same bytes, so the PDF is keyed by document identity
+    // and opened only after its bytes are fully hydrated from OPFS or IndexedDB.
+    latestFile.current.arrayBuffer().then(bytes => {
+      if (!active) return
+      if (!bytes.byteLength) throw Error()
+      task = getDocument({ data: new Uint8Array(bytes), standardFontDataUrl: '/pdf-fonts/' })
+      return task.promise.then(pdf => { if (active) setDocument(pdf) })
+    }).catch(() => { if (active) setError('Unable to open this PDF preview.') })
+    return () => { active = false; void task?.destroy().catch(() => {}) }
+  }, [documentKey])
   useEffect(() => {
-    if (!document || !canvas.current || !size.width) return
+    if (!document || !canvas.current || size.width < 40) return
     let active = true
     let task: ReturnType<Awaited<ReturnType<PDFDocumentProxy['getPage']>>['render']> | undefined
     const visible = canvas.current
@@ -87,9 +103,10 @@ export function Document({ url, filename, page, pages, onPage, source, onRegion,
         visible.style.height = target.style.height
         visible.getContext('2d')?.drawImage(target,0,0)
         setRendered({document,page})
+        setPaintedDocument(document)
         holder.current?.dispatchEvent(new CustomEvent('pagerendered',{detail:{pageNumber:page},bubbles:true}))
       })
-    }).catch(() => { if (active) setError('Unable to render this page.') })
+    }).catch(cause => { if (active && cause?.name !== 'RenderingCancelledException') setError('Unable to render this page.') })
     return () => { active = false; task?.cancel() }
   }, [document, page, size, zoom, preview])
   const evidenceMark=useRef<HTMLElement>(null)
@@ -101,13 +118,19 @@ export function Document({ url, filename, page, pages, onPage, source, onRegion,
     if(offset<0||offset>scroller.clientHeight*.8)scroller.scrollTop+=offset-scroller.clientHeight*.4
   },[rendered,source?.page,source?.box,selected])
   const box = outline ?? (ready && source?.page === page && source.box[2] > source.box[0] ? source.box : undefined)
-  return <Card padding={0} className={preview ? "document preview-document" : "document"} role="region" aria-label="Source document">
+  const openOriginal = () => {
+    const url = URL.createObjectURL(file)
+    window.open(url, '_blank', 'noopener')
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  }
+  const painted = !!document && paintedDocument === document
+  return <Card padding={0} className={preview ? "document preview-document" : "document"} role="region" aria-label={title ?? "Source document"}>
     <div className="document-head">
-      <strong><FileText size={17}/> {preview ? "PDF preview" : "Source PDF"}</strong>
-      <Button href={url} target="_blank" rel="noreferrer" variant="ghost" size="sm"
+      <strong><FileText size={17}/> {title ?? (preview ? "PDF preview" : "Source PDF")}</strong>
+      <Button variant="ghost" size="sm" onClick={openOriginal}
         label={`Open ${filename} in a new tab`} tooltip="Open original PDF" icon={<ExternalLink size={15}/>} isIconOnly/>
     </div>
-    <div className="document-tools">
+    {tools && <div className="document-tools">
       {onRegion && <Button label={marking ? 'Cancel selection' : 'Select area'} icon={<ScanLine size={15}/>} size="sm" aria-pressed={marking}
         onClick={() => { mark(!marking); outlineBox(undefined); start.current = undefined }}/>}
       <div className="tool-group">
@@ -124,10 +147,11 @@ export function Document({ url, filename, page, pages, onPage, source, onRegion,
         <span className="zoom-level">{zoom}%</span>
         <Button label="Zoom in" icon={<Plus size={14}/>} variant="ghost" size="sm" isIconOnly onClick={() => setZoom(zoom + 25)} isDisabled={zoom >= 175}/>
       </div>
-    </div>
-    <div className="paper-container"><div className="paper-width" ref={holder}>
-      {error && <p className="paper-error" role="alert">{error} <a href={url} target="_blank" rel="noreferrer">Open the PDF</a></p>}
-      <div className="paper" hidden={!!error} data-rendered-page={ready ? page : undefined}>
+    </div>}
+    <div className="paper-container" data-pdf-ready={document ? '' : undefined}><div className="paper-width" ref={holder}>
+      {error && <p className="paper-error" role="alert">{error} <button type="button" className="text-link" onClick={openOriginal}>Open the PDF</button></p>}
+      {!error && !painted && <p className="paper-loading" role="status">Rendering page {page}…</p>}
+      <div className="paper" hidden={!!error} data-painted={painted || undefined} data-rendered-page={ready ? page : undefined}>
         <canvas ref={canvas} aria-label={`PDF page ${page}`}/>
         {marking && <div className="region-select" aria-label="Drag to select evidence" onPointerDown={e=>{e.currentTarget.setPointerCapture(e.pointerId);start.current=point(e)}} onPointerMove={e=>{if(start.current)outlineBox(region(point(e)))}} onPointerCancel={()=>{start.current=undefined;outlineBox(undefined)}} onPointerUp={e=>{
           if(!start.current)return
@@ -158,7 +182,7 @@ export function Document({ url, filename, page, pages, onPage, source, onRegion,
             style={{ left: `${box[0] * 100}%`, top: `${box[1] * 100}%`, width: `${(box[2] - box[0]) * 100}%`, height: `${(box[3] - box[1]) * 100}%` }}/>}
       </div>
     </div></div>
-    {!preview && <div className="document-foot">
+    {!preview && tools && <div className="document-foot">
       <span><i className="key-swatch verified"/> Verified / clear source</span>
       <span><i className="key-swatch"/> Review required</span>
     </div>}

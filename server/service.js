@@ -1,4 +1,5 @@
-import {resources,workspaceTools} from '../src/bridgeCatalog.ts'
+import {resources,appResources,workspaceTools} from '../src/bridgeCatalog.ts'
+import {appMime,cardUri,createTask,elicitedContext,inputRequired,taskMethod,tasksExtension,uiExtension,verificationCard} from './mcp-extensions.js'
 import { analyzeLines,receiptCheck } from '../src/findings.ts'
 
 const byteLimit=8*1024*1024
@@ -50,7 +51,7 @@ const json=(data,status=200)=>Response.json(data,{status,headers:{'Cache-Control
 export async function service(req,readPdf,bridge){
   const path=new URL(req.url).pathname
   if(!['/api/v2','/api/v2/analyze','/mcp'].includes(path))return
-  if(req.method==='GET'&&path==='/api/v2')return json({name:'Folio',version:2,analyze:{method:'POST',path:'/api/v2/analyze',inputs:['application/pdf (binary)','application/json {"pages":["line-separated page text"]}'],limit:'8 MiB, 150 pages'},mcp:{method:'POST',path:'/mcp',protocol:'2026-07-28',tools:[...Object.keys(inputs),...Object.keys(workspaceTools).filter(name=>bridge?.allowed(name))]},review:'All findings require source verification. needs_ocr lists pages with insufficient extractable text.'})
+  if(req.method==='GET'&&path==='/api/v2')return json({name:'Folio',version:3,analyze:{method:'POST',path:'/api/v2/analyze',inputs:['application/pdf (binary)','application/json {"pages":["line-separated page text"]}'],limit:'8 MiB, 150 pages'},mcp:{method:'POST',path:'/mcp',protocol:'2026-07-28',tools:[...Object.keys(inputs),...Object.keys(workspaceTools).filter(name=>bridge?.allowed(name))]},review:'All findings require source verification. needs_ocr lists pages with insufficient extractable text.'})
   if(req.method!=='POST')return new Response(null,{status:405,headers:{Allow:'POST'}})
   if(req.headers.get('Origin')&&req.headers.get('Origin')!==new URL(req.url).origin)return json({error:'Origin rejected'},403)
   let msg
@@ -66,8 +67,8 @@ export async function service(req,readPdf,bridge){
       msg._meta?.['io.modelcontextprotocol/protocolVersion']
     const modern = wireVersion==='2026-07-28' || envelopeVersion==='2026-07-28'
     const cache = modern ? {ttlMs:0,cacheScope:'PRIVATE'} : {}
-    const serverInfo = {name:'folio',version:'2.0.0'}
-    const capabilities = {tools:{},...(bridge ? {resources:{}} : {})}
+    const serverInfo = {name:'folio',version:'3.0.0'}
+    const capabilities = {tools:{},...(bridge ? {resources:{},extensions:{[tasksExtension]:{},[uiExtension]:{mimeTypes:[appMime]}}} : {})}
     const reply=result=>json({jsonrpc:'2.0',id:msg.id,result:modern ? {
       ...result,_meta:{...result._meta,'io.modelcontextprotocol/serverInfo':serverInfo},
     } : result})
@@ -81,7 +82,14 @@ export async function service(req,readPdf,bridge){
     if(msg.method==='server/discover')return reply({supportedVersions:['2026-07-28'],capabilities,...cache})
     if(msg.method==='initialize' && !modern) return reply({protocolVersion:['2025-11-25','2025-06-18','2025-03-26'].includes(msg.params?.protocolVersion)?msg.params.protocolVersion:'2025-11-25',capabilities,serverInfo})
     if(msg.method==='ping')return reply({})
-    if(msg.method==='resources/list' && bridge)return reply({resources,...cache})
+    if(msg.method==='resources/list' && bridge)return reply({resources:[...resources,...appResources],...cache})
+    if(msg.method==='resources/read' && bridge && msg.params?.uri===cardUri)return reply({...cache,contents:[{uri:cardUri,mimeType:appMime,text:verificationCard()}]})
+    if(msg.method.startsWith('tasks/') && bridge){
+      const outcome=taskMethod(msg.method,msg.params)
+      if(!outcome)return error(-32601,'Unknown method')
+      if(outcome.error)return error(-32602,outcome.error)
+      return reply(msg.method==='tasks/result' ? {...outcome.result,_meta:{...outcome.result._meta,'io.modelcontextprotocol/related-task':{taskId:outcome.task.taskId}}} : outcome)
+    }
     if(msg.method==='resources/read' && bridge){
       const resource=resources.find(value=>value.uri===msg.params?.uri)
       if(!resource)return error(-32002,'Unknown resource.')
@@ -103,7 +111,18 @@ export async function service(req,readPdf,bridge){
           if(args!==undefined&&(!args||typeof args!=='object'||Array.isArray(args)))throw Error('Tool arguments must be an object.')
           const agent=msg.params?._meta?.['io.modelcontextprotocol/clientInfo']?.name ??
             msg._meta?.['io.modelcontextprotocol/clientInfo']?.name
-          result=await bridge.call(name,args,typeof agent==='string' ? agent.slice(0,120) : 'Agent',true)
+          const caller=typeof agent==='string' ? agent.slice(0,120) : 'Agent'
+          if(msg.params?.task!==undefined){
+            if(workspaceTools[name].execution?.taskSupport!=='optional')throw Error('This tool does not support task-augmented calls.')
+            if(!bridge.allowed(name))throw Error('Tool consent is disabled.')
+            return reply({task:createTask(()=>bridge.call(name,args,caller,true).then(value=>({content:[{type:'text',text:JSON.stringify(value)}],structuredContent:value})),msg.params.task?.ttl)})
+          }
+          const input=name==='propose_finding_edit' ? {...args,...elicitedContext(msg.params,name)} : args
+          result=await bridge.call(name,input,caller,true)
+          if(result?.input_required){
+            if(modern)return reply(inputRequired(result.input_required,{tool:name,finding_id:args?.finding_id}))
+            throw Error(result.input_required.message+' Pass arguments.context with '+result.input_required.fields.join(' and ')+'.')
+          }
           return reply({content:[{type:'text',text:JSON.stringify(result)}],structuredContent:result})
         }
         if(msg.params?.name==='analyze_text')result=textAnalysis(args?.pages)

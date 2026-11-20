@@ -23,7 +23,7 @@ export function useAuditIntegrity(ledgers:Ledger[]) {
 
 export function IntegrityBadge({integrity}:{integrity:boolean|undefined}) {
   if (integrity===undefined) return null
-  return <span className={'status-pill '+(integrity?'verified':'review')}>
+  return <span className={'status-pill '+(integrity?'verified':'variance')}>
     {integrity ? 'SHA-256 Hash Chain Verified' : 'SHA-256 hash chain could not be verified'}
   </span>
 }
@@ -40,7 +40,8 @@ export function ActivityTable({ledgers,query='',includeDocument=false}:{ledgers:
       {includeDocument && <td>{document}</td>}
       <td className="audit-action">{event.action==='Verify figure' ? <StatusPill status="Verified"/> :
         event.action==='On hold' ? <StatusPill status="On Hold"/> :
-        event.action==='Escalated' || event.action==='Excluded' ? <StatusPill status={event.action}/> : event.action}</td>
+        event.action==='Escalated' || event.action==='Excluded' ? <StatusPill status={event.action}/> :
+        event.signoff ? <span className="status-pill signed">Sign-Off</span> : event.action}</td>
       <td className="audit-metric">{event.original?.source_label ?? event.original?.label ?? '—'}</td><td>{event.reviewer}</td><td>{event.reason || '—'}</td>
       <td>{event.ocr ? extracted(event.ocr.before) : describe(event.before)}</td><td>{event.ocr ? extracted(event.ocr.after) : describe(event.after)}</td>
       <td>{new Date(event.saved).toISOString().slice(0,19).replace('T',' ')}</td>

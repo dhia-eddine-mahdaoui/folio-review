@@ -1,6 +1,7 @@
 import type {AgentDraft} from './agentDraft'
 import type {Finding} from './findings'
 import type {Figure} from './register'
+import type {SignOff} from './passkey'
 
 export const defaultReasons = ['Unreadable Scan', 'Arithmetic Variance', 'Duplicate Page', 'Out of Period', 'Other']
 export const priorities = ['Low', 'Normal', 'High'] as const
@@ -17,6 +18,7 @@ export type AuditEvent = {
   before?: Figure | Exclusion | Assignment
   after?: Figure | Exclusion | Assignment
   ocr?: {page:number; before:Finding[]; after:Finding[]; invalidatedDrafts?:string[]}
+  signoff?: SignOff
 }
 
 export function findingKey(finding: Finding) {

@@ -5,14 +5,16 @@ import {promisify} from 'node:util'
 import {fileURLToPath} from 'node:url'
 
 const cwd=fileURLToPath(new URL('../',import.meta.url))
-const url='http://127.0.0.1:8031'
+// Passkeys need a domain origin, so the window opens on localhost while readiness is checked on the loopback address.
+const url='http://localhost:8031'
+const service='http://127.0.0.1:8031'
 const execute=promisify(execFile)
 const options={cwd,detached:true,stdio:'ignore',windowsHide:true}
 const windows=process.platform==='win32'
 
 async function ready(){
   try{
-    const response=await fetch(url+'/api/v2',{signal:AbortSignal.timeout(600)})
+    const response=await fetch(service+'/api/v2',{signal:AbortSignal.timeout(600)})
     return response.ok&&(await response.json()).name==='Folio'
   }catch{return false}
 }

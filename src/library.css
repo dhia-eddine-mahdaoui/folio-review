@@ -2,15 +2,15 @@
 .folio-topbar {
   min-height: 57px;
   padding-inline: clamp(10px, 2vw, 26px);
-  background: #fff;
+  background: var(--surface);
   border-bottom: 1px solid var(--color-border);
 }
 .folio-topbar .workspace-nav-item { color: var(--color-text-secondary); }
-.folio-topbar .workspace-nav-item:hover { background: #eff3f7; }
+.folio-topbar .workspace-nav-item:hover { background: var(--sunken); }
 .folio-topbar .workspace-nav-item[aria-current] {
-  color: #154e94;
-  background: #edf3fa;
-  box-shadow: inset 0 -2px #154e94;
+  color: var(--ink);
+  background: var(--wash);
+  box-shadow: inset 0 -2px var(--ink);
 }
 .nav-count { margin-inline-start: 5px; font: 400 11px var(--font-family-code); }
 .api-reference { display: inline-flex; gap: 5px; align-items: center; color: var(--color-text-secondary); font-size: 13px; text-decoration: none; }
@@ -18,7 +18,7 @@
 
 .library { max-width: 1536px; margin-inline: auto; padding: clamp(22px, 3.2vw, 41px) clamp(14px, 3vw, 42px); }
 .page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 26px; }
-.page-heading h1 { font-size: clamp(24px, 2.6vw, 31px); letter-spacing: -.025em; }
+.page-heading h1, .hub h1 { font-size: clamp(22px, 2.2vw, 26px); font-weight: 600; line-height: 1.25; margin: 0; }
 .page-heading p { margin-top: 4px; color: var(--color-text-secondary); }
 .page-heading > button { flex: none; }
 .surface.dragging { outline: 2px dashed var(--color-accent); outline-offset: -3px; }
@@ -27,7 +27,7 @@
 .list-title h2 { font-weight: 650; font-size: 15px; }
 .list-controls { min-width: 0; }
 .list-controls select { max-width: 180px; min-height: 32px; border: 1px solid var(--color-border-emphasized); border-radius: 6px; padding: 4px 22px 4px 7px; color: var(--color-text-primary); background: var(--color-background-surface); font-size: 12px; }
-.data-table th { background: #eff3f7; border-top: 1px solid var(--color-border); }
+.data-table th { background: var(--sunken); border-top: 1px solid var(--color-border); }
 .data-table .number { text-align: right; font-variant-numeric: tabular-nums; }
 .data-table td.number { font-family: var(--font-family-code); }
 .library-table th:first-child { width: 54%; }
@@ -73,12 +73,12 @@
 .library-index .list-controls { flex: 1 1 183px; justify-content: flex-end; flex-wrap: nowrap; }
 .library-index .list-controls > :first-child { min-width: 0; max-width: 100%; }
 .library-index .empty { min-height: 178px; }
-.library-index .selected-workpaper > td { background: #edf4fb; }
-.library-index .selected-workpaper > td:first-child { box-shadow: inset 2px 0 #154e94; }
+.library-index .selected-workpaper > td { background: var(--wash); }
+.library-index .selected-workpaper > td:first-child { box-shadow: inset 2px 0 var(--ink); }
 .library-preview {
   min-width: 0;
-  background: #e1e8ef;
-  border-inline-start: 1px solid #bac9d7;
+  background: var(--desk);
+  border-inline-start: 1px solid var(--rule);
 }
 .preview-bar {
   display: flex;
@@ -86,8 +86,8 @@
   justify-content: space-between;
   gap: 12px;
   padding: 17px clamp(14px, 2.8vw, 34px);
-  background: #f1f5f9;
-  border-bottom: 1px solid #bac9d7;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
 }
 .preview-bar div { min-width: 0; }
 .preview-bar h2 { margin: 0; font-size: 18px; font-weight: 620; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -95,12 +95,12 @@
 .preview-bar button { flex: none; }
 .library-preview .preview-document { border: 0; border-radius: 0; }
 .library-preview .document-head { display: none; }
-.library-preview .document-tools { padding: 7px clamp(14px, 2.8vw, 34px); border-top: 0; background: #f7f9fb; }
-.library-preview .paper-container { height: max(390px, calc(100dvh - 176px)); padding: clamp(18px, 3vw, 42px); background: #e1e8ef; }
+.library-preview .document-tools { padding: 7px clamp(14px, 2.8vw, 34px); border-top: 0; background: var(--surface); }
+.library-preview .paper-container { height: max(390px, calc(100dvh - 176px)); padding: clamp(18px, 3vw, 42px); background: var(--desk); }
 .preview-loading { padding: 26px; color: var(--color-text-secondary); }
 @media (max-width: 800px) {
   .library-workbench { grid-template-columns: minmax(0,1fr); min-height: 0; }
   .library-index { padding: 17px 14px; }
-  .library-preview { border-inline-start: 0; border-top: 1px solid #bac9d7; }
+  .library-preview { border-inline-start: 0; border-top: 1px solid var(--rule); }
   .library-preview .paper-container { height: min(64dvh,500px); }
 }

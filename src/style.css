@@ -1,32 +1,104 @@
-[data-astryx-theme="neutral"] {
-  --font-family-body: "IBM Plex Sans", system-ui, sans-serif;
+/* Folio palette: neutral application chrome, one blue for actions and selection, red only for numbers that disagree. */
+:root, [data-astryx-theme="neutral"] {
+  color-scheme: light;
+  --paper: #f8f9fa;
+  --surface: #ffffff;
+  --sunken: #f1f3f4;
+  --desk: #e8eaed;
+  --ink: #202124;
+  --ink-2: #5f6368;
+  --ink-3: #80868b;
+  --rule: #dadce0;
+  --rule-strong: #bdc1c6;
+  --accent: #1a73e8;
+  --accent-strong: #1765cc;
+  --wash: #1a73e812;
+  --wash-strong: #1a73e824;
+  --mark: #d93025;
+  --mark-wash: #fce8e6;
+
+  --font-family-body: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-family-heading: var(--font-family-body);
-  --font-family-code: "IBM Plex Mono", ui-monospace, monospace;
-  --color-accent: #154e94;
-  --color-text-accent: #154e94;
-  --color-background-body: #fff;
-  --color-background-surface: #fff;
-  --color-background-muted: #eff3f7;
-  --color-text-primary: #182231;
-  --color-text-secondary: #435467;
-  --color-border: #cbd5df;
-  --color-border-emphasized: #aab9c9;
-  --radius-inner: 3px;
+  --font-family-code: ui-monospace, "Cascadia Mono", "Roboto Mono", Consolas, monospace;
+  --font-family-document: var(--font-family-body);
+  --radius-inner: 4px;
   --radius-element: 4px;
-  --radius-container: 4px;
-  --folio-focus: #1859a5;
+  --radius-container: 8px;
+
+  --color-accent: var(--accent);
+  --color-accent-muted: var(--wash-strong);
+  --color-on-accent: var(--surface);
+  --color-text-accent: var(--accent);
+  --color-icon-accent: var(--accent);
+  --color-background-body: var(--paper);
+  --color-background-surface: var(--surface);
+  --color-background-card: var(--surface);
+  --color-background-popover: var(--surface);
+  --color-background-muted: var(--sunken);
+  --color-text-primary: var(--ink);
+  --color-text-secondary: var(--ink-2);
+  --color-icon-primary: var(--ink);
+  --color-icon-secondary: var(--ink-2);
+  --color-border: var(--rule);
+  --color-border-emphasized: var(--rule-strong);
+  --color-success: var(--ink-2);
+  --color-success-muted: var(--sunken);
+  --color-on-success: var(--surface);
+  --color-on-success-muted: var(--ink);
+  --color-warning: var(--ink-2);
+  --color-warning-muted: var(--sunken);
+  --color-on-warning: var(--surface);
+  --color-on-warning-muted: var(--ink);
+  --color-info: var(--ink-2);
+  --color-info-muted: var(--sunken);
+  --color-on-info: var(--surface);
+  --color-on-info-muted: var(--ink);
+  --color-error: var(--mark);
+  --color-error-muted: var(--mark-wash);
+  --color-on-error: var(--surface);
+  --color-on-error-muted: var(--mark);
+  --color-border-success: var(--rule-strong);
+  --color-border-warning: var(--rule-strong);
+  --color-border-info: var(--rule-strong);
+  --color-border-error: var(--mark);
+  --folio-focus: var(--accent);
+  --folio-rail: var(--paper);
+  --folio-input: var(--surface);
+  --folio-header: var(--sunken);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
-body { margin: 0; }
-.app { min-height: 100dvh; background: var(--color-background-body); color: var(--color-text-primary); }
+body { margin: 0; background: var(--paper); }
+.app { min-height: 100dvh; background: var(--paper); color: var(--ink); font-variant-numeric: tabular-nums; }
 .app button { cursor: pointer; }
 .app button:disabled { cursor: default; }
 .app svg { flex: none; }
-.app :focus-visible { outline: 2px solid var(--folio-focus); outline-offset: 3px; }
+.app :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sr-only { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; white-space: nowrap; }
-.tile { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 4px; flex: none; background: #edf2f7; color: var(--color-text-secondary); }
-.notice { display: flex; align-items: center; gap: 12px; padding: 10px 20px; background: #e9f1fa; color: #283a4d; overflow-wrap: anywhere; }
+.tile { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 3px; flex: none; background: var(--sunken); color: var(--ink-2); }
+.notice { display: flex; align-items: center; gap: 12px; padding: 9px 20px; background: var(--surface); border-bottom: 1px solid var(--rule); color: var(--ink); overflow-wrap: anywhere; }
 .notice > span { flex: 1; }
 .notice [role="progressbar"] { width: 44px; flex: none; }
-.notice.error { background: #fff0ef; color: #852d2e; }
+.notice.error { background: var(--mark-wash); color: var(--mark); border-color: var(--mark); }
+
+/* Status marks: a glyph and a word in ink. No coloured pills. */
+.status-pill { display: inline-flex; align-items: baseline; gap: 4px; width: fit-content; padding: 0; font-size: 11px; line-height: 1.4; white-space: nowrap; color: var(--ink-2); background: none; }
+.status-pill::before { font-family: var(--font-family-code); color: var(--ink); }
+.status-pill.pending::before { content: "○"; }
+.status-pill.hold::before { content: "◐"; }
+.status-pill.escalated::before { content: "↑"; }
+.status-pill.verified::before { content: "✓"; }
+.status-pill.excluded::before { content: "×"; }
+.status-pill.excluded { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--ink-3); }
+.status-pill.flag::before { content: "·"; }
+.status-pill.variance, .status-pill.variance::before { color: var(--mark); }
+.status-pill.variance::before { content: "≠"; }
+.status-pill.signed::before { content: "✓"; font-weight: 700; color: var(--accent); }
+.meta-flag { font-size: 10px; padding: 0 4px; border: 1px solid var(--rule); border-radius: 2px; color: var(--ink-2); }
+kbd { font: 10px var(--font-family-code); white-space: nowrap; padding: 0 3px; border: 1px solid var(--rule-strong); border-radius: 2px; color: var(--ink-3); }
+.queue-status { display: flex; flex-wrap: wrap; gap: 2px 10px; }
+.status-pill[data-empty] { color: var(--ink-3); }
+.status-pill[data-empty]::before { color: var(--ink-3); }
+.legacy-offer { gap: 10px; }
+.legacy-offer b { font-weight: 600; }
+.save-action kbd { color: inherit; border-color: currentColor; opacity: .75; }

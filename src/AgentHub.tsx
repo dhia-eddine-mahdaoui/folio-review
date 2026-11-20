@@ -3,12 +3,20 @@ import {Button} from '@astryxdesign/core/Button'
 import {Check, Plug} from 'lucide-react'
 import {resources,workspaceTools,type WorkspaceTool} from './bridgeCatalog'
 import {type Preferences} from './preferences'
+import {webgpuAvailable} from './vlm'
 
 type Agent = {name:string; detected:boolean; installed:boolean; managed:boolean; skill:string|null}
 type LocalAgents = {template:string; installedRuntime:boolean; agents:Agent[]}
 const endpoint = '/api/local/agents'
 const names = ['Codex','Claude Code','Gemini CLI','Cursor']
 const customHeading = '\n## Workspace instructions\n'
+const toolNotes:Record<WorkspaceTool,string> = {
+  propose_finding_edit:'Drafts need reviewer approval · asks the user to confirm unit and period (input_required) when the source is ambiguous',
+  explain_reconciliation_variance:'Read only',
+  query_figure_register:'Read only',
+  run_workpaper_tieout:'Read only · runs as a non-blocking MCP task when the client requests one',
+  review_finding_draft:'Lets the MCP Apps card Approve & Verify or reject drafts, signed as your reviewer name. Off by default.',
+}
 
 export function AgentHub({settings,onSettings,connected}:{connected:boolean;settings:Preferences;onSettings:(value:Preferences)=>void}) {
   const [local,setLocal] = useState<LocalAgents>()
@@ -20,6 +28,8 @@ export function AgentHub({settings,onSettings,connected}:{connected:boolean;sett
   const [saving,setSaving] = useState(false)
   const [message,setMessage] = useState('')
   const [mode,setMode] = useState(settings.ocr)
+  const [webgpu,setWebgpu] = useState<boolean>()
+  useEffect(()=>{void webgpuAvailable().then(setWebgpu)},[])
   const agent = local?.agents.find(agent=>agent.name===target)
   const skill = agent?.skill ?? local?.template
   useEffect(()=>{
@@ -79,7 +89,7 @@ export function AgentHub({settings,onSettings,connected}:{connected:boolean;sett
     <div className="hub-grid">
       <section className="hub-card">
         <h2>Live MCP Co-Pilot Bridge</h2>
-        <p>2026-07-28 · Streamable HTTP</p>
+        <p>MCP 2026-07-28 · Streamable HTTP · Tasks, input_required and MCP Apps extensions</p>
         <label className="switch-field"><input type="checkbox" checked={settings.bridge.enabled}
           onChange={event=>onSettings({...settings,bridge:{...settings.bridge,enabled:event.target.checked}})}/> Share this workspace with local MCP clients</label>
         <p role="status">{connected ? 'Browser workspace connected' : 'Browser workspace disconnected'}</p>
@@ -89,7 +99,7 @@ export function AgentHub({settings,onSettings,connected}:{connected:boolean;sett
         {(Object.keys(workspaceTools) as WorkspaceTool[]).map(name=><label key={name} className="switch-field">
           <input type="checkbox" checked={settings.bridge.tools[name]} onChange={event=>onSettings({...settings,
             bridge:{...settings.bridge,tools:{...settings.bridge.tools,[name]:event.target.checked}}})}/>
-          <span><code>{name}</code><small>{name==='propose_finding_edit' ? 'Draft approval required' : 'Read only'}</small></span>
+          <span><code>{name}</code><small>{toolNotes[name]}</small></span>
         </label>)}
         <label>Endpoint<input readOnly value={location.origin+'/mcp'} onFocus={event=>event.target.select()}/></label>
         <p>Add this URL as an HTTP MCP server in your agent client.</p>
@@ -131,8 +141,12 @@ export function AgentHub({settings,onSettings,connected}:{connected:boolean;sett
           <label>Default reviewer ID<input name="reviewer" defaultValue={settings.reviewer} maxLength={120} placeholder="Name or team ID"/></label>
           <label>Exception reason codes <textarea name="reasons" defaultValue={settings.reasons.join('\n')} maxLength={2000} rows={5} required/></label>
           <label>Manual OCR engine<select name="engine" aria-label="Manual OCR engine" value={mode} onChange={event=>setMode(event.target.value as Preferences['ocr'])}>
-            <option value="local">Local English OCR</option><option value="hosted">Hosted OCR endpoint</option><option value="mistral">Mistral OCR 4.1</option>
+            <option value="vlm">In-Browser Local VLM (WebGPU · Transformers.js · Zero Setup)</option>
+            <option value="local">Local English OCR (Tesseract)</option><option value="hosted">Hosted OCR endpoint</option><option value="mistral">Mistral OCR Hosted</option>
           </select></label>
+          {mode==='vlm' && <p role="status" data-webgpu={webgpu===undefined ? undefined : String(webgpu)}>{webgpu===undefined ? 'Checking for WebGPU…' : webgpu
+            ? 'WebGPU available · Florence-2 runs in a dedicated worker on this device.'
+            : 'WebGPU unavailable · Florence-2 runs on the WASM/CPU fallback, which is slower.'} The model downloads once (about 250 MB) and is cached by the browser; page images never leave this device.</p>}
           {mode==='hosted' && <><label>Hosted OCR endpoint<input name="endpoint" type="url" defaultValue={settings.endpoint} placeholder="https://…" required/></label>
             <p>OCR retry and unreadable lasso selections send a PNG to this endpoint. Imports use local OCR. The endpoint must allow this origin and return JSON with a <code>lines</code> array of <code>text</code>, normalized <code>box</code> and optional <code>confidence</code> values from 0 to 100.</p></>}
           {mode==='mistral' && <p>Manual re-indexing sends a PNG to Mistral. Set MISTRAL_API_KEY in the local service.</p>}

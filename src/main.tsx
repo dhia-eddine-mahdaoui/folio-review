@@ -21,13 +21,10 @@ import {QueueStatus} from './QueueStatus'
 import {formattedAmount,sourceScale} from './amount'
 import {useWorkspaceBridge} from './bridge'
 import {AgentHub} from './AgentHub'
+import {exportLegacyLibrary, isLegacyExport, legacyOrigin, migrationKey, requestLegacyLibrary} from './migrate'
 import '@astryxdesign/core/reset.css'
 import '@astryxdesign/core/astryx.css'
 import '@astryxdesign/theme-neutral/theme.css'
-import '@fontsource/ibm-plex-sans/latin-400.css'
-import '@fontsource/ibm-plex-sans/latin-500.css'
-import '@fontsource/ibm-plex-sans/latin-600.css'
-import '@fontsource/ibm-plex-mono/latin-400.css'
 import './style.css'
 import './library.css'
 import './workspace.css'
@@ -49,10 +46,12 @@ function App() {
   const [settings,setSettings] = useState(preferences)
   const [railDrag,setRailDrag] = useState(false)
   const [message, setMessage] = useState('')
+  const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [deletion, setDeletion] = useState<Header>()
   const [deleting, setDeleting] = useState(false)
+  const [legacyOffer, setLegacyOffer] = useState(() => location.hostname === 'localhost' && !localStorage.getItem(migrationKey))
   const picker = useRef<HTMLInputElement>(null)
   const locked = useRef(false)
 
@@ -116,9 +115,13 @@ function App() {
           const prefix = files.length > 1 ? `File ${index + 1} of ${files.length} · ` : ''
           setMessage(prefix + 'Opening ' + file.name)
           const progress = (step: string) => setMessage(prefix + step + ' · ' + file.name)
-          const doc = extension === 'folio'
-            ? await (await import('./backup')).restore(file, progress)
-            : await indexPdf(file, progress, {sample,docling:settings.docling && !sample})
+          let doc: RecordFile
+          if (extension === 'folio') {
+            const restored = await (await import('./backup')).restore(file, progress)
+            doc = restored.doc
+            const current = preferences()
+            if (restored.reviewer && current.persistReviewer && !current.reviewer.trim()) updateSettings({...current,reviewer:restored.reviewer.name})
+          } else doc = await indexPdf(file, progress, {sample,docling:settings.docling && !sample})
           if (files.length === 1) setActive({doc})
         } catch (error) {
           problems.push(file.name + ' — ' + (error instanceof Error ? error.message : 'Import failed.'))
@@ -132,6 +135,42 @@ function App() {
       locked.current = false
       setMessage('')
       setError(problems.join(' · '))
+    }
+  }
+
+  async function moveLegacyLibrary() {
+    if (locked.current) return
+    locked.current = true
+    setError('')
+    setMessage('Opening the Folio 2.0 library at ' + legacyOrigin())
+    const problems: string[] = []
+    try {
+      const {archives, preferences: legacy} = await requestLegacyLibrary()
+      const {restore} = await import('./backup')
+      for (const [index, archive] of archives.entries()) {
+        setMessage(`Moving workpaper ${index + 1} of ${archives.length} · ${archive.name}`)
+        try {
+          await restore(new File([new Uint8Array(archive.bytes)], archive.name.replace(/\.pdf$/i, '') + '.folio'), () => {})
+        } catch (cause) {
+          problems.push(archive.name + ' — ' + (cause instanceof Error ? cause.message : 'Could not be moved.'))
+        }
+      }
+      if (legacy && !localStorage.getItem(preferencesKey)) {
+        localStorage.setItem(preferencesKey, legacy)
+        setSettings(preferences())
+      }
+      localStorage.setItem(migrationKey, new Date().toISOString())
+      setLegacyOffer(false)
+      await refresh()
+      if (!problems.length) setError('')
+      setMessage('')
+      if (!problems.length) setNotice(archives.length ? `Moved ${archives.length} ${archives.length === 1 ? 'workpaper' : 'workpapers'} from ${legacyOrigin()}.` : 'No workpapers were stored under ' + legacyOrigin() + '.')
+    } catch (cause) {
+      problems.push(cause instanceof Error ? cause.message : 'The library could not be moved.')
+    } finally {
+      locked.current = false
+      setMessage('')
+      if (problems.length) setError(problems.join(' · '))
     }
   }
 
@@ -175,8 +214,9 @@ function App() {
     }
   }
 
-  const pending = active ? items.find(item=>item.id===active.doc.id)?.review?.pending ?? 0
-    : items.reduce((total,item)=>total+(item.review?.pending ?? 0),0)
+  const outstanding = (item?:Header) => (item?.review?.pending ?? 0)+(item?.review?.unresolved ?? 0)
+  const pending = active ? outstanding(items.find(item=>item.id===active.doc.id))
+    : items.reduce((total,item)=>total+outstanding(item),0)
   function updateSettings(value:typeof settings) {
     storePreferences(value)
     setSettings(value)
@@ -197,7 +237,7 @@ function App() {
     <aside className="workspace-rail" aria-label="Workspace sidebar">
       <button type="button" className="rail-brand" onClick={()=>navigate('Documents')}>
         <img className="brand-icon" src="/folio.svg" alt=""/>
-        <span><strong>FOLIO</strong><small>2.0</small></span>
+        <span><strong>Folio</strong><small>3.0</small></span>
       </button>
       <nav className="rail-nav" aria-label="Workspace navigation">
         {views.map(({label,short,icon:Icon})=><button type="button" aria-label={label} key={label} onClick={()=>navigate(label)}
@@ -213,7 +253,7 @@ function App() {
             <span className="rail-file-icon"><FileText size={15}/></span>
             <span><strong>{item.name}</strong><div className="rail-file-status">
               {item.review?.counts && <QueueStatus counts={item.review.counts}/>}
-              {!!item.review?.scans && <span className="status-pill review">OCR</span>}
+              {!!item.review?.scans && <span className="status-pill flag">OCR</span>}
             </div></span>
           </button>)}
           {!items.length && <button type="button" className="rail-sample" onClick={openSample} disabled={!canImport}><BookOpen size={16}/><span><strong>Open sample workpaper</strong></span></button>}
@@ -228,6 +268,12 @@ function App() {
     </aside>
     <main className="workspace-main">
       {error && <div className="notice error" role="alert"><span>{error}</span><Button variant="ghost" label="Dismiss error" icon={<X size={16}/>} isIconOnly onClick={() => setError('')}/></div>}
+      {notice && <div className="notice" role="status"><span>{notice}</span><Button variant="ghost" label="Dismiss" icon={<X size={16}/>} isIconOnly onClick={() => setNotice('')}/></div>}
+      {legacyOffer && !active && !message && view === 'Documents' && <div className="notice legacy-offer" role="region" aria-label="Move Folio 2.0 library">
+        <span>Folio now opens at <b>localhost</b> so passkeys can sign workpapers. Workpapers saved by earlier versions stay under {legacyOrigin()} until you move them here.</span>
+        <Button size="sm" variant="primary" label="Move library" onClick={() => void moveLegacyLibrary()}/>
+        <Button size="sm" variant="ghost" label="Not now" onClick={() => {localStorage.setItem(migrationKey, 'dismissed'); setLegacyOffer(false)}}/>
+      </div>}
       {message && <div className="notice" role="status"><ProgressBar label="Import in progress" isLabelHidden isIndeterminate/><span>{message}</span></div>}
       {active ? <Suspense fallback={<div className="notice" role="status">Opening workpaper…</div>}>
         <Reader key={active.doc.id+':'+(active.figure ?? '')} initial={active.doc} initialFigure={active.figure} back={() => navigate(view==='Review queue' ? view : 'Documents')}
@@ -388,4 +434,10 @@ function Register({items, loading, onOpen, onBrowse}: {
   </div>
 }
 
-createRoot(document.getElementById('root')!).render(<Theme theme={neutralTheme} mode="dark"><App/></Theme>)
+function LegacyExport() {
+  const [error, setError] = useState('')
+  useEffect(() => {void exportLegacyLibrary().catch(cause => setError(cause instanceof Error ? cause.message : 'Export failed.'))}, [])
+  return <div className="notice" role={error ? 'alert' : 'status'}>{error || 'Moving your Folio library to localhost…'}</div>
+}
+
+createRoot(document.getElementById('root')!).render(<Theme theme={neutralTheme} mode="light">{isLegacyExport() ? <LegacyExport/> : <App/>}</Theme>)

@@ -11,23 +11,18 @@ export function LibraryPreview({item, sampleName, disabled, onOpen}: {
   onOpen: () => void
 }) {
   const [page, setPage] = useState(1)
-  const [url, setUrl] = useState(item ? '' : '/northfield-sample.pdf')
+  const [file, setFile] = useState<Blob>()
   const [error, setError] = useState(false)
   const id = item?.id
   useEffect(() => {
-    if (!id) return
     let active = true
-    let objectUrl: string | undefined
-    void get(id).then(record => {
-      if (!active) return
-      if (!record) throw Error()
-      objectUrl = URL.createObjectURL(record.file)
-      setUrl(objectUrl)
-    }).catch(() => {if (active) setError(true)})
-    return () => {
-      active = false
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
-    }
+    setFile(undefined)
+    void (id ? get(id).then(record => record?.file) : fetch('/northfield-sample.pdf').then(response => response.ok ? response.blob() : undefined))
+      .then(blob => {
+        if (!blob) throw Error()
+        if (active) setFile(blob)
+      }).catch(() => {if (active) setError(true)})
+    return () => {active = false}
   }, [id])
   const title = item?.name ?? sampleName
   return <aside className="library-preview" aria-labelledby="library-preview-heading">
@@ -37,7 +32,7 @@ export function LibraryPreview({item, sampleName, disabled, onOpen}: {
       <Button size="sm" variant="secondary" label={item ? 'Open workpaper' : 'Open sample report'}
         endContent={<ArrowRight size={14}/>} isDisabled={disabled} onClick={onOpen}/>
     </div>
-    {url ? <Document url={url} filename={title} page={page} pages={item?.pages ?? 2} onPage={setPage} preview/> :
+    {file ? <Document file={file} documentKey={id ?? 'sample'} filename={title} page={page} pages={item?.pages ?? 2} onPage={setPage} preview/> :
       <div className="preview-loading" role={error ? 'alert' : 'status'}>{error ? 'Preview unavailable' : 'Opening preview…'}</div>}
   </aside>
 }

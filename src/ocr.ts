@@ -1,6 +1,7 @@
 import { createWorker, OEM } from 'tesseract.js'
 import type { PDFPageProxy } from 'pdfjs-dist'
 import type { Line } from './register'
+import {vlmEndpoint} from './vlm'
 
 export function startOCR(){
   return createWorker('eng',OEM.LSTM_ONLY,{
@@ -28,6 +29,10 @@ export async function recognizePage(
   let ownWorker: Awaited<ReturnType<typeof startOCR>> | undefined
   try {
     await page.render({canvas,viewport:view,transform:[1,0,0,1,-region[0]*view.width,-region[1]*view.height]}).promise
+    if (endpoint===vlmEndpoint) {
+      const {recognizeWithVlm} = await import('./vlm')
+      return (await recognizeWithVlm(canvas)).map(line => ({page:page.pageNumber,text:line.text,box:boxOnPage(line.box),ocr:true,block_type:'vlm'}))
+    }
     if (endpoint) {
       const blob = await new Promise<Blob>((resolve,reject) => canvas.toBlob(value => value ? resolve(value) : reject(Error('Could not render the OCR image.')), 'image/png'))
       const response = await fetch(endpoint,{method:'POST',body:blob,credentials:'omit',redirect:'error',signal:AbortSignal.timeout(45000)})

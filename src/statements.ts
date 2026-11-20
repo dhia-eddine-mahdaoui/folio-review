@@ -1,4 +1,5 @@
 import type {Line} from './register'
+import {canonical} from './taxonomy.ts'
 
 const statementPattern=/^(?:(?:condensed|consolidated|interim|unaudited)\s+)*(?:statements? of (?:operations|income|earnings|cash flows?)|balance sheets?)\b/i
 const scales:Record<string,number>={thousand:1000,million:1000000,billion:1000000000,one:1}
@@ -8,13 +9,6 @@ const datePattern=new RegExp('\\b('+months.join('|')+')\\s+(\\d{1,2}),?(?:\\s+((
 const numeric=String.raw`(?:\(?-?\d[\d,]*(?:\.\d+)?\)?|[—–])`
 const tail=new RegExp('(?:\\s+(?:[$£€]\\s*)?'+numeric+')+\\s*$')
 const token=new RegExp(numeric,'g')
-const taxonomy:Record<string,{tag:string;label:string}> = {
-  operating_income:{tag:'OperatingIncomeLoss',label:'Operating Profit'},
-  net_income:{tag:'NetIncomeLoss',label:'Net Income'},
-  total_net_sales:{tag:'RevenueFromContractWithCustomerExcludingAssessedTax',label:'Revenues'},
-  income_before_provision_for_income_taxes:{tag:'IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest',label:'Income Before Taxes'},
-  provision_for_income_taxes:{tag:'IncomeTaxExpenseBenefit',label:'Income Tax Expense'},
-}
 const key=(s:string)=>s.toLowerCase().replace(/[’']/g,'').replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'')
 export const isStatementHeading=(s:string)=>statementPattern.test(s)
 type Column={end_date:string;duration_months:number|null;heading:string; box?:Line['box']; grid?:Grid}
@@ -133,9 +127,9 @@ export function extractStatement(lines:Line[]){
       const amount=cell[0].replaceAll(',','').replace(/^\((.+)\)$/,'-$1').replace(/^[–—]$/,'0')
       const flags=[...(!period?['missing_period']:[]),...(!scale?['missing_scale']:[]),...(!currency&&!shares?['missing_currency']:[]),...(!col?['column_alignment_unresolved']:[])]
       const metric=shares?'shares_'+key(label):perShare?'earnings_per_share_'+key(label):key(label)
-      const tag = currency==='USD' ? taxonomy[metric] : undefined
-      result.push({label,source_label:label,canonical_metric:tag ? tag.label+' (US-GAAP)' : label,
-        xbrl_tag:tag ? 'us-gaap:'+tag.tag : null,metric,section,amount,currency:shares?null:currency||null,
+      const tag = currency && !shares && !perShare ? canonical(metric,currency,label) : {label,tag:null}
+      result.push({label,source_label:label,canonical_metric:tag.label,
+        xbrl_tag:tag.tag,metric,section,amount,currency:shares?null:currency||null,
         currency_basis:shares?null:currencyCode?'statement currency code':appleUSD?'Apple Inc. reporting currency inferred from issuer and $':symbol??null,
         scale:scale||null,unit:[shares?'shares':currency||symbol,perShare?'per share':scale].filter(Boolean).join(' '),
         normalized_amount:absoluteAmount(amount,scale),

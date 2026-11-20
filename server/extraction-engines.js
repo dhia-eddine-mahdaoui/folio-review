@@ -1,9 +1,15 @@
 import {spawn} from 'node:child_process'
+import {existsSync} from 'node:fs'
+import {fileURLToPath} from 'node:url'
+
+// Desktop payloads ship the script beside this file; a source checkout keeps it in folio/.
+const packaged=fileURLToPath(new URL('./docling_layout.py',import.meta.url))
+const doclingScript=existsSync(packaged)?packaged:'folio/docling_layout.py'
 import {boundedBody} from './service.js'
 
 function docling(pdf) {
   return new Promise((resolve,reject)=>{
-    const child = spawn(process.env.FOLIO_DOCLING_PYTHON,['folio/docling_layout.py'],{
+    const child = spawn(process.env.FOLIO_DOCLING_PYTHON,[doclingScript],{
       stdio:['pipe','pipe','ignore'],timeout:180000,windowsHide:true,
     })
     const chunks = []
