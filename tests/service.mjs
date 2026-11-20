@@ -23,6 +23,10 @@ assert(net.source.box[2]>net.source.box[0])
 assert.equal((await call('initialize',{protocolVersion:'2025-11-25'})).protocolVersion,'2025-11-25')
 const tools = await call('tools/list')
 assert.deepEqual(tools.tools.map(tool=>tool.name),['analyze_pdf','analyze_text'])
+// MCP 2026-07-28 clients (e.g. Claude Code) reject list results whose cacheScope is not 'public' or 'private'.
+const modernList = await service(new Request(url+'/mcp',{method:'POST',headers:{'MCP-Protocol-Version':'2026-07-28','Mcp-Method':'tools/list'},
+  body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list',params:{}})}),read)
+assert.ok(['public','private'].includes((await modernList.json()).result.cacheScope))
 const analyzed = await call('tools/call',{name:'analyze_pdf',arguments:{pdf_base64:pdf.toString('base64'),metric:'net_income',limit:1}})
 const parsed = JSON.parse(analyzed.content[0].text)
 assert.equal(parsed.matched_count,2)

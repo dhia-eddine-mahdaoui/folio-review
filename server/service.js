@@ -66,7 +66,7 @@ export async function service(req,readPdf,bridge){
     const envelopeVersion = msg.params?._meta?.['io.modelcontextprotocol/protocolVersion'] ??
       msg._meta?.['io.modelcontextprotocol/protocolVersion']
     const modern = wireVersion==='2026-07-28' || envelopeVersion==='2026-07-28'
-    const cache = modern ? {ttlMs:0,cacheScope:'PRIVATE'} : {}
+    const cache = modern ? {ttlMs:0,cacheScope:'private'} : {}
     const serverInfo = {name:'folio',version:'3.0.0'}
     const capabilities = {tools:{},...(bridge ? {resources:{},extensions:{[tasksExtension]:{},[uiExtension]:{mimeTypes:[appMime]}}} : {})}
     const reply=result=>json({jsonrpc:'2.0',id:msg.id,result:modern ? {
