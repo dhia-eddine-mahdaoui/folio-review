@@ -1,7 +1,7 @@
 import {extractStatement,isStatementHeading,validateStatements} from './statements.ts'
 import type { Line } from './register'
 
-export type Finding = {label:string; amount:string; unit:string; period:string; source:Line}
+export type Finding = {label:string; amount:string; unit:string; period:string; source:Line; review_flags?:string[]; normalized_amount?:string|null}
 const fields: [string, RegExp][] = [
   ['Service revenue', /^service revenue/i], ['Revenue', /^(?:total revenue|revenue|net sales)\b/i],
   ['EBITDA margin', /^ebitda margin/i], ['Adjusted EBITDA', /^adjusted ebitda\b/i],
@@ -28,7 +28,7 @@ function narrative(lines:Line[]):Finding[]{
     const next=lines[i+1]
     if(next?.page===source.page && /^to\s+(?:\D{0,4})\d/i.test(next.text)){
       text+=' '+next.text
-      source={...source,text:source.text+' '+next.text,box:[Math.min(source.box[0],next.box[0]),Math.min(source.box[1],next.box[1]),Math.max(source.box[2],next.box[2]),Math.max(source.box[3],next.box[3])]}
+      source={...source,confidence:source.confidence !== undefined && next.confidence !== undefined ? Math.min(source.confidence,next.confidence) : undefined,text:source.text+' '+next.text,box:[Math.min(source.box[0],next.box[0]),Math.min(source.box[1],next.box[1]),Math.max(source.box[2],next.box[2]),Math.max(source.box[3],next.box[3])]}
     }
     for(const [label,pattern] of fields){
       const prefix=text.match(pattern)
@@ -63,19 +63,24 @@ export function receiptCheck(items:Finding[]){
   if(new Set(terms.map(f=>f.unit)).size!==1||terms.some(f=>!/^\d+(?:\.\d{1,2})?$/.test(f.amount)))return
   const cents=(f:Finding)=>Math.round(Number(f.amount)*100)
   const difference=cents(total[0])-terms.slice(0,-1).reduce((sum,f)=>sum+cents(f),0)
-  return {matches:difference===0,difference:(difference/100).toFixed(2),unit:total[0].unit,calculation:terms.slice(0,-1).map(f=>f.amount).join(' + ')+' vs '+total[0].amount}
+  return {matches:difference===0,difference:(difference/100).toFixed(2),unit:total[0].unit,calculation:terms.slice(0,-1).map(f=>f.amount).join(' + ')+' vs '+total[0].amount,total:total[0],operands:additions.concat(subtotal).map(finding=>({finding,sign:1}))}
 }
 
 export function analyzeLines(lines:Line[]){
   const pages=new Map<number,Line[]>()
   for(const l of lines){const p=pages.get(l.page)??[];p.push(l);pages.set(l.page,p)}
   const tables:ReturnType<typeof extractStatement>=[]
+  const checks:ReturnType<typeof validateStatements>=[]
   const rest:Line[]=[]
   const issues=new Set<string>()
   for(const rows of pages.values()){
     if(rows.some(l=>isStatementHeading(l.text))){
       const starts=rows.flatMap((l,i)=>isStatementHeading(l.text)?[i]:[])
-      const fields=starts.flatMap((start,i)=>extractStatement(rows.slice(i===0?0:start,starts[i+1])))
+      const fields=starts.flatMap((start,i)=>{
+        const statement=extractStatement(rows.slice(i===0?0:start,starts[i+1]))
+        checks.push(...validateStatements(statement))
+        return statement
+      })
       if(!fields.length)issues.add('unresolved_statement')
       tables.push(...fields)
       for(const f of fields)for(const flag of f.review_flags)issues.add(flag)
@@ -83,7 +88,6 @@ export function analyzeLines(lines:Line[]){
   }
   const other=narrative(rest).map(f=>({...f,review_flags:[...(!f.period?['missing_period']:[]),...(!f.unit?['missing_unit']:[])]}))
   for(const f of other)for(const flag of f.review_flags)issues.add(flag)
-  const checks=validateStatements(tables)
   if(checks.some(c=>c.status==='failed'))issues.add('arithmetic_mismatch')
   const items=[...tables,...other]
   const status=!items.length?'no_findings':issues.size?'partial':'extracted'

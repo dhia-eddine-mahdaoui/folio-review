@@ -84,24 +84,29 @@ export function extractStatement(lines:Line[]){
         scale:scale||null,unit:[shares?'shares':currency||symbol,perShare?'per share':scale].filter(Boolean).join(' '),
         normalized_amount:absoluteAmount(amount,scale),
         period,end_date:col?.end_date||null,duration_months:col?.duration_months??null,column:index+1,review_flags:flags,
-        source:{page:line.page,column:index+1,text:rowText,box:box??line.box,cell_box:box??null,statement_heading:heading,scale_note:note,column_heading:period,header_lines:header.filter(t=>t!==note&&!/:$/.test(t)),row_label:label}})
+        source:{page:line.page,column:index+1,text:rowText,box:box??line.box,confidence:line.confidence,ocr:line.ocr,cell_box:box??null,statement_heading:heading,scale_note:note,column_heading:period,header_lines:header.filter(t=>t!==note&&!/:$/.test(t)),row_label:label}})
     }
   }
   return result
 }
 type Observation=ReturnType<typeof extractStatement>[number]
 export function validateStatements(fields:Observation[]){
-  const checks:{name:string;period:string;page:number;unit:string;reported:number;calculated:number;difference:number;status:string}[]=[]
+  const checks:{name:string;period:string;page:number;unit:string;reported:number;calculated:number;difference:number;status:string;total:Observation;operands:{finding:Observation;sign:number}[]}[] = []
   const groups=new Map<string,Observation[]>()
   for(const f of fields){const id=f.source.page+'|'+f.period;const group=groups.get(id)??[];group.push(f);groups.set(id,group)}
   for(const rows of groups.values()){
     if(!rows[0].period)continue
-    const get=(metric:string,section?:string)=>rows.find(r=>r.metric===metric&&(!section||r.section.toLowerCase()===section))
+    const get=(metric:string,section?:string)=>{
+      const matches=rows.filter(r=>r.metric===metric&&(!section||r.section.toLowerCase()===section))
+      return matches.length===1?matches[0]:undefined
+    }
     function check(name:string,total:Observation|undefined,terms:[Observation|undefined,number][]){
-      if(!total||terms.some(([t])=>!t||t.unit!==total.unit)||total.review_flags.length)return
+      if(!total||terms.some(([t])=>!t||t.review_flags.length||t.unit!==total.unit)||total.review_flags.length)return
       const expected=terms.reduce((v,[t,sign])=>v+Number(t!.amount)*sign,0)
       const difference=Number((Number(total.amount)-expected).toFixed(8))
-      checks.push({name,period:total.period,page:total.source.page,unit:total.unit,reported:Number(total.amount),calculated:expected,difference,status:difference===0?'passed':'failed'})
+      if(!Number.isFinite(difference))return
+      checks.push({name,period:total.period,page:total.source.page,unit:total.unit,reported:Number(total.amount),calculated:expected,difference,status:difference===0?'passed':'failed',
+        total,operands:terms.map(([finding,sign])=>({finding:finding!,sign}))})
     }
     const sales=get('total_net_sales')
     check('Revenue components',sales,[[get('products','net sales'),1],[get('services','net sales'),1]])
@@ -115,7 +120,13 @@ export function validateStatements(fields:Observation[]){
     check('Gross profit',get('gross_margin'),[[sales,1],[get('total_cost_of_sales'),-1]])
     check('Operating income',get('operating_income'),[[get('gross_margin'),1],[get('total_operating_expenses'),-1]])
     check('Net income',get('net_income'),[[get('income_before_provision_for_income_taxes'),1],[get('provision_for_income_taxes'),-1]])
-    check('Balance sheet equation',get('total_assets'),[[get('total_liabilities'),1],[get('total_shareholders_equity'),1]])
+    check('Balance sheet equation',get('total_assets'),[[get('total_liabilities'),1],[get('total_shareholders_equity')??get('total_stockholders_equity')??get('total_equity'),1]])
+    for(const section of new Set(rows.map(row=>row.section.toLowerCase()).filter(Boolean))){
+      const sectionRows=rows.filter(row=>row.section.toLowerCase()===section)
+      const total=get('total_'+key(section),section)
+      if(total&&sectionRows.at(-1)===total&&sectionRows.length>=3&&sectionRows.slice(0,-1).every(row=>!/^(?:total|subtotal)_/.test(row.metric))&&
+        !checks.some(check=>check.total===total)) check(total.label,total,sectionRows.slice(0,-1).map(row=>[row,1]))
+    }
     const cash=(word:string)=>rows.find(r=>r.metric.endsWith(word))
     check('Cash rollforward',cash('ending_balances'),[[cash('beginning_balances'),1],[cash('by_operating_activities'),1],[cash('by_investing_activities'),1],[cash('in_financing_activities'),1]])
   }

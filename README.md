@@ -1,6 +1,12 @@
 # Folio
 
-Folio turns financial report highlights and receipt totals into a review queue. Each finding carries its source page and text. Select a finding to inspect the original, correct its fields, and save it to the register. Receipt checks compare a single subtotal plus recognized tax and tip against the total. Workbooks separate reviewed figures from proposed findings. CSV exports only reviewed figures.
+Folio is a local workspace for reviewing figures from financial reports, statements and receipts. Its dark workpaper pairs the original PDF and review form with a sortable Figure register. Select a highlight to open its finding, hover over the active source or citation to see the connection, or draw around a region to capture text for the citation. The heatmap distinguishes clear source evidence and verified figures from findings that need attention.
+
+Reconciliation checks show variances for recognized financial and receipt totals while you edit. Save a figure and advance, or record an exclusion, hold or escalation with a reason code. Reviewers can assign findings, set priorities, and filter the queue by owner, priority or reason. Each workpaper keeps the original extraction, reviewer IDs, reasons, and before-and-after values in Activity history. Reviewer IDs are entered locally. You can share assignments and review history through a portable `.folio` backup.
+
+The Figure register searches verified figures across imported documents and exports the filtered results to CSV with source quotes and notes. The workpaper's Excel export also includes findings, exception codes, assignments, and activity history. The sample report provides a practice workpaper, and figures saved there stay inside the sample.
+
+The interface uses [Astryx](https://github.com/meta/astryx) for tables, cards and review controls.
 
 ## Run locally
 
@@ -16,7 +22,7 @@ Open http://127.0.0.1:8031. The local server binds to loopback. The private Site
 
 ## REST
 
-POST binary PDF data to /api/v2/analyze. The local service runs bundled English OCR on pages with fewer than 24 extracted characters. The hosted REST endpoint reads the PDF text layer and returns sparse pages in needs_ocr. The browser performs English OCR locally on sparse pages and can run OCR on any selected page, including pages in previously imported files. A page OCR retry replaces that page’s search index. Saved citations retain their original text.
+POST binary PDF data to /api/v2/analyze. The local service runs bundled English OCR on pages with fewer than 24 extracted characters. The hosted REST endpoint reads the PDF text layer and returns sparse pages in needs_ocr. The browser performs English OCR locally on sparse pages and can run OCR on any selected page, including pages in previously imported files. A page OCR retry replaces that page’s search index and archives its old predictions. Saved citations retain their original text. The Agent MCP & Skill panel can configure a hosted HTTPS OCR provider for manual retries. The provider receives a PNG of the selected page or unreadable region and returns JSON with a `lines` array containing `text`, `box` coordinates in [left, top, right, bottom] order normalized to 0–1, and optional `confidence` from 0 to 100. The provider must allow the workbench origin via CORS.
 
 ```sh
 curl --fail-with-body -H 'Content-Type: application/pdf' \
@@ -37,9 +43,9 @@ The original Python service is available separately via `uvicorn folio.api:app` 
 
 ## Desktop installation and agent skills
 
-The Windows x64 installer in `output/installers` installs Folio for the current user, creates Start menu and desktop shortcuts, and offers to add the `folio-review` skill to detected Codex, Claude Code, Gemini CLI and Cursor profiles. Run setup again after adding another agent. The Windows application opens the local workbench in the default browser. Installed agents can extract and OCR PDFs directly using the included CLI even when the browser is closed. Uninstall from Windows Installed apps. Modified agent skill files are preserved.
+Download the Windows installer, Linux archive, and illustrated product guide with the test run from the [Folio 1.2.0 release](https://github.com/dhia-eddine-mahdaoui/folio-review/releases/tag/v1.2.0). The Windows x64 installer installs Folio for the current user and creates Start menu and optional desktop shortcuts. For Linux x64 with glibc, extract the Linux archive and run `Folio/install-linux.sh`. Then open Folio Review in the application menu. The desktop launcher starts the local service and opens a standalone window when the default browser supports Chromium app mode. Other browsers open Folio in a tab using the same browser profile and library.
 
-For Linux x64 with glibc, extract the Linux archive and run `Folio/install-linux.sh`. Open Folio Review in the application menu, or use the executable at `~/.local/share/folio-review/folio`. Remove the installation using its `uninstall.sh`. Start a new agent session to refresh the skill list.
+In Folio Desktop, open Agent MCP & Skill to preview, install or customize the local `folio-review` skill for detected Codex, Claude Code, Gemini CLI and Cursor profiles. Use Test connection to check that Folio MCP responds and advertises its tools. Add the displayed MCP URL to your agent client and start a new agent session after installing or updating its skill. Installed agents can also use the included CLI to extract and OCR PDFs while the workbench is closed. Uninstall from Windows Installed apps or run the installed Linux `uninstall.sh`. Folio preserves unmanaged and externally edited skills.
 
 ### Rebuild distribution packages on Linux x64
 
@@ -54,10 +60,10 @@ python3 desktop/stage.py windows output/desktop-build/windows \
   --node output/desktop-build/node-win-x64-24.18.0.tgz \
   --canvas output/desktop-build/napi-rs-canvas-win32-x64-msvc-1.1.1.tgz \
   --node-license /path/to/node-24.18.0/LICENSE
-makensis -DPAYLOAD="$PWD/output/desktop-build/windows" -DVERSION=1.0.0 \
-  -DOUTFILE="$PWD/output/installers/Folio-Review-1.0.0-x64-Setup.exe" desktop/installer.nsi
+makensis -DPAYLOAD="$PWD/output/desktop-build/windows" -DVERSION=1.2.0 \
+  -DOUTFILE="$PWD/output/installers/Folio-Review-1.2.0-x64-Setup.exe" desktop/installer.nsi
 python3 desktop/stage.py linux output/desktop-build/Folio/app \
   --node /path/to/node-24.18.0/bin/node --node-license /path/to/node-24.18.0/LICENSE
 cp desktop/*linux.sh output/desktop-build/Folio/
-tar czf output/installers/Folio-Review-1.0.0-linux-x64.tar.gz -C output/desktop-build Folio
+tar czf output/installers/Folio-Review-1.2.0-linux-x64.tar.gz -C output/desktop-build Folio
 ```

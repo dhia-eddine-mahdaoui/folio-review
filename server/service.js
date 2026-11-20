@@ -13,9 +13,10 @@ function textAnalysis(pages){
 }
 function resultFor(pages,lines){
   const {items,checks,review_flags,extraction_status}=analyzeLines(lines)
+  const receipt=receiptCheck(items)
   const sparse=pages.flatMap((p,i)=>p.trim().length<24?[i+1]:[])
   return {pages:pages.length,coverage:pages.map((_,i)=>({page:i+1,observations:items.filter(f=>f.source.page===i+1).length})),extraction_status:sparse.length&&items.length?'partial':extraction_status,review_flags:sparse.length?[...review_flags,'sparse_page']:review_flags,
-    arithmetic_checks:checks,receipt_check:receiptCheck(items)??null,findings:items.map(({source,...f})=>{
+    arithmetic_checks:checks.map(({total,operands,...check})=>check),receipt_check:receipt?(({total,operands,...check})=>check)(receipt):null,findings:items.map(({source,...f})=>{
       const {words,box,...evidence}=source
       return {...f,source:{...evidence,...(box?.some(Boolean)?{box}:{})}}
     }),needs_ocr:sparse}
